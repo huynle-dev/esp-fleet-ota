@@ -1,0 +1,4 @@
+.worktrees/
+.pio/
+__pycache__/
+*.pyc
