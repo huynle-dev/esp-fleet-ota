@@ -631,6 +631,25 @@ class TestMerge(Base):
                                         "-o", self.path("f.bin"))
             self.assertNotEqual(code, 0)
 
+    def test_merge_bootloader_offset_per_chip(self):
+        want = {"esp32": "0x1000", "esp32s2": "0x1000", "esp32c2": "0x0", "esp32c3": "0x0", "esp32c6": "0x0",
+                "esp32h2": "0x0", "esp32s3": "0x0", "esp32c5": "0x2000", "esp32p4": "0x2000"}
+        for chip, off in want.items():
+            cmd = fr.merge_command("/fake/esptool", chip, self.build_dir, self.path("f.bin"))
+            self.assertEqual(cmd[cmd.index(os.path.join(self.build_dir, "bootloader.bin")) - 1], off, chip)
+
+    def test_merge_refuses_unknown_chip_instead_of_guessing(self):
+        for chip in ("esp32c61", "esp32h4", "esp8266"):
+            with self.assertRaises(fr.ReleaseError) as cm:
+                fr.merge_command("/fake/esptool", chip, self.build_dir, self.path("f.bin"))
+            self.assertIn("bootloader offset", str(cm.exception))
+        with mock.patch.object(fr.shutil, "which", lambda name: "/fake/esptool.py"), \
+                mock.patch.object(fr.subprocess, "run", lambda cmd, **k: self.fail("esptool must not run")):
+            code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32c61",
+                                        "-o", self.path("f.bin"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("esp32c61", err)
+
     def test_merge_esptool_failure_reported(self):
         with mock.patch.object(fr.shutil, "which", lambda name: "/fake/esptool.py"), \
                 mock.patch.object(fr.subprocess, "run",

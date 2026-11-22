@@ -520,13 +520,21 @@ def cmd_factory(a):
     print("publish factory image -> %s (+ factory.json, factory.json.sig next to it)" % url)
 
 
-# Merged image offsets. The second-stage bootloader is at 0x1000 on ESP32 and ESP32-S2, at 0x0 on the newer chips.
-_BOOTLOADER_AT = {"esp32": "0x1000", "esp32s2": "0x1000"}
+# Where the second-stage bootloader sits in flash, per chip (ESP-IDF CONFIG_BOOTLOADER_OFFSET_IN_FLASH). Explicit on
+# purpose: a chip that is not listed is refused, because a wrong offset builds an image that does not boot.
+_BOOTLOADER_AT = {
+    "esp32": "0x1000", "esp32s2": "0x1000",
+    "esp32c2": "0x0", "esp32c3": "0x0", "esp32c6": "0x0", "esp32h2": "0x0", "esp32s3": "0x0",
+    "esp32c5": "0x2000", "esp32p4": "0x2000",
+}
 
 
 def merge_command(esptool, chip, build_dir, output, flash_size="4MB"):
     _check_str("chip", chip, _CHIP, 16)
-    parts = [(_BOOTLOADER_AT.get(chip, "0x0"), "bootloader.bin"), ("0x8000", "partitions.bin"),
+    if chip not in _BOOTLOADER_AT:
+        raise ReleaseError("no known bootloader offset for chip %s (known: %s); add it to _BOOTLOADER_AT after "
+                           "checking the chip's bootloader offset" % (chip, ", ".join(sorted(_BOOTLOADER_AT))))
+    parts = [(_BOOTLOADER_AT[chip], "bootloader.bin"), ("0x8000", "partitions.bin"),
              ("0x10000", "firmware.bin")]
     cmd = [esptool, "--chip", chip, "merge_bin", "-o", output, "--flash_mode", "dio", "--flash_size", flash_size]
     for off, name in parts:

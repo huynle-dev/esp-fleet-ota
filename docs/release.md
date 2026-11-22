@@ -122,7 +122,7 @@ This runs `esptool.py --chip <chip> merge_bin -o factory.bin --flash_mode dio --
 
 | Offset | File | Contents |
 |---|---|---|
-| `0x0` (`0x1000` on esp32 and esp32s2) | `bootloader.bin` | second-stage bootloader |
+| `0x0` on esp32c2, c3, c6, h2, s3; `0x1000` on esp32, esp32s2; `0x2000` on esp32c5, esp32p4 | `bootloader.bin` | second-stage bootloader. Any other chip is refused (a wrong offset does not boot) |
 | `0x8000` | `partitions.bin` | partition table |
 | `0x10000` | `firmware.bin` | the app, in the first OTA slot (`app0`) |
 
