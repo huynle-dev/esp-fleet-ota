@@ -190,6 +190,16 @@ static void test_release_tool_output_parses() {
     TEST_ASSERT_EQUAL_UINT32(4, m.size);
 }
 
+// A factory descriptor (browser flashing, tools/fota_release.py factory) is NOT an OTA manifest: the device parser
+// must refuse it, so the two can never be mixed up. TEST_ONLY_FACTORY comes from the release tool's encoder.
+static void test_factory_descriptor_is_refused_as_manifest() {
+    Manifest m;
+    const char* field = nullptr;
+    TEST_ASSERT_EQUAL_STRING("UnknownKey",
+                             manifestErrorName(parseManifest(TEST_ONLY_FACTORY, strlen(TEST_ONLY_FACTORY), m, &field)));
+    TEST_ASSERT_NOT_NULL(strstr(TEST_ONLY_FACTORY, "\"factory_url\""));
+}
+
 static void test_error_names() {
     TEST_ASSERT_EQUAL_STRING("TooLarge", manifestErrorName(ManifestError::TooLarge));
     TEST_ASSERT_EQUAL_STRING("UnsupportedSchema", manifestErrorName(ManifestError::UnsupportedSchema));
@@ -210,6 +220,7 @@ int main(int, char**) {
     RUN_TEST(test_syntax_errors);
     RUN_TEST(test_error_leaves_output_untouched);
     RUN_TEST(test_release_tool_output_parses);
+    RUN_TEST(test_factory_descriptor_is_refused_as_manifest);
     RUN_TEST(test_error_names);
     return UNITY_END();
 }

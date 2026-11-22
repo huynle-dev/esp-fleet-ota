@@ -10,11 +10,17 @@
     fota_release.py sign --manifest manifest.json --local-key test.pem    # TEST ONLY
     fota_release.py verify --manifest manifest.json [--sig manifest.json.sig] --public-key pub.pem
                            [--key-version N] [--bin firmware.bin]
+    fota_release.py merge --build-dir .pio/build/esp32c3 --chip esp32c3 [-o factory.bin]   # wraps esptool merge_bin
+    fota_release.py factory --bin factory.bin --product P --chip esp32c3 --version 1.4.0 \
+                            (--url https://... | --base-url https://fw.example.com) [-o factory.json]
     fota_release.py c-key --public-key pub.pem --key-id esp-fleet-ota --key-version N --name kEspFleetOtaV1
 
 Layout derived from --base-url when --url is not given:
     manifest  <base>/<product>/<chip>/<channel>/manifest.json (+ .sig)
     image     <base>/<product>/<version>/<chip>/firmware.bin
+    factory   <base>/<product>/<version>/<chip>/factory.bin (+ factory.json, factory.json.sig)
+The factory descriptor (factory.json) is for browser flashing only; devices never read it, and it is deliberately
+not an OTA manifest (the device parser refuses it). `sign` and `verify` accept both kinds.
 Devices do not derive the image path: they download whatever https URL on an allow-listed host the signed manifest
 names.
 
@@ -29,6 +35,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import ssl
 import subprocess
 import sys
@@ -40,6 +47,10 @@ DEFAULT_KEY_ID = "esp-fleet-ota"          # example default key_id; use the key 
 FIELDS = ["schema", "product", "chip", "board", "channel", "version", "min_version", "url", "size", "sha256",
           "key_id", "released_at"]
 REQUIRED = {"schema", "product", "chip", "channel", "version", "url", "size", "sha256", "key_id", "released_at"}
+# Factory descriptor (browser flashing): this exact key order; board is the only optional key.
+FACTORY_FIELDS = ["schema", "product", "chip", "board", "version", "factory_url", "factory_sha256", "factory_size",
+                  "key_id", "released_at"]
+FACTORY_REQUIRED = set(FACTORY_FIELDS) - {"board"}
 
 _SEMVER = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
@@ -117,10 +128,7 @@ def validate_manifest(m):
         _check_str("min_version", m["min_version"], None)
         if compare_semver(m["min_version"], m["version"]) > 0:
             raise ReleaseError("min_version is above version")
-    url = m["url"]
-    _check_str("url", url, None, 256)
-    if not url.startswith("https://") or len(url) == 8 or any(ord(c) <= 0x20 or ord(c) >= 0x7F for c in url):
-        raise ReleaseError("url must be an https URL without spaces: %r" % url)
+    _check_url("url", m["url"])
     if type(m["size"]) is not int or not 0 < m["size"] <= 0x7FFFFFFF:
         raise ReleaseError("size must be an integer in 1..2^31-1")
     if not isinstance(m["sha256"], str) or not re.match(r"^[0-9a-f]{64}$", m["sha256"]):
@@ -128,6 +136,62 @@ def validate_manifest(m):
     _check_str("key_id", m["key_id"], _KEY_ID)
     if not isinstance(m["released_at"], str) or not _TS.match(m["released_at"]):
         raise ReleaseError("released_at must be YYYY-MM-DDTHH:MM:SSZ")
+
+
+def _check_url(name, url):
+    _check_str(name, url, None, 256)
+    if not url.startswith("https://") or len(url) == 8 or any(ord(c) <= 0x20 or ord(c) >= 0x7F for c in url):
+        raise ReleaseError("%s must be an https URL without spaces: %r" % (name, url))
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def validate_factory(m):
+    """Factory descriptor rules: the manifest's rules for the shared fields, flat, no extra keys."""
+    if list(m) != [k for k in FACTORY_FIELDS if k in m]:
+        raise ReleaseError("factory descriptor keys are not in the required order")
+    if set(m) - set(FACTORY_FIELDS):
+        raise ReleaseError("unknown keys: %s" % sorted(set(m) - set(FACTORY_FIELDS)))
+    if FACTORY_REQUIRED - set(m):
+        raise ReleaseError("missing keys: %s" % sorted(FACTORY_REQUIRED - set(m)))
+    if type(m["schema"]) is not int or m["schema"] != 1:
+        raise ReleaseError("schema must be 1")
+    _check_str("product", m["product"], _SLUG)
+    _check_str("chip", m["chip"], _CHIP, 16)
+    if "board" in m:
+        _check_str("board", m["board"], _SLUG)
+    _check_str("version", m["version"], None)
+    parse_semver(m["version"])
+    _check_url("factory_url", m["factory_url"])
+    if not isinstance(m["factory_sha256"], str) or not re.match(r"^[0-9a-f]{64}$", m["factory_sha256"]):
+        raise ReleaseError("factory_sha256 must be 64 lowercase hex characters")
+    if type(m["factory_size"]) is not int or not 0 < m["factory_size"] <= 0x7FFFFFFF:
+        raise ReleaseError("factory_size must be an integer in 1..2^31-1")
+    _check_str("key_id", m["key_id"], _KEY_ID)
+    if not isinstance(m["released_at"], str) or not _TS.match(m["released_at"]):
+        raise ReleaseError("released_at must be YYYY-MM-DDTHH:MM:SSZ")
+
+
+def encode_factory(m):
+    ordered = {k: m[k] for k in FACTORY_FIELDS if k in m}
+    validate_factory(ordered)
+    data = json.dumps(ordered, separators=(",", ":"), ensure_ascii=True).encode()
+    if len(data) > MAX_MANIFEST_BYTES:
+        raise ReleaseError("factory descriptor is %d bytes, the limit is %d" % (len(data), MAX_MANIFEST_BYTES))
+    return data
+
+
+def build_factory(bin_path, product, chip, version, url, key_id, board=None, released_at=None):
+    with open(bin_path, "rb") as f:
+        image = f.read()
+    m = {"schema": 1, "product": product, "chip": chip}
+    if board:
+        m["board"] = board
+    m.update({"version": version, "factory_url": url, "factory_sha256": hashlib.sha256(image).hexdigest(),
+              "factory_size": len(image), "key_id": key_id, "released_at": released_at or _now()})
+    return encode_factory(m)
 
 
 def encode_manifest(m):
@@ -150,13 +214,13 @@ def build_manifest(bin_path, product, chip, version, url, key_id, channel="stabl
     if min_version:
         m["min_version"] = min_version
     m.update({"url": url, "size": len(image), "sha256": hashlib.sha256(image).hexdigest(), "key_id": key_id,
-              "released_at": released_at or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+              "released_at": released_at or _now()})
     return encode_manifest(m)
 
 
-def parse_manifest_bytes(data):
+def _load_flat_json(data):
     if len(data) > MAX_MANIFEST_BYTES:
-        raise ReleaseError("manifest larger than %d bytes" % MAX_MANIFEST_BYTES)
+        raise ReleaseError("file larger than %d bytes" % MAX_MANIFEST_BYTES)
 
     def no_dupes(pairs):
         keys = [k for k, _ in pairs]
@@ -169,8 +233,31 @@ def parse_manifest_bytes(data):
         raise ReleaseError("manifest is not valid JSON: %s" % e)
     if not isinstance(m, dict):
         raise ReleaseError("manifest is not an object")
+    return m
+
+
+def parse_manifest_bytes(data):
+    """An OTA manifest, with the device parser's rules (a factory descriptor is refused)."""
+    m = _load_flat_json(data)
     validate_manifest(m)
     return m
+
+
+def parse_factory_bytes(data):
+    m = _load_flat_json(data)
+    validate_factory(m)
+    return m
+
+
+def parse_signed_bytes(data):
+    """Returns ("manifest" | "factory", dict). The kind is decided by the keys: factory_url means a factory
+    descriptor; it is then validated strictly as that kind, so a mix of both kinds is refused."""
+    m = _load_flat_json(data)
+    if "factory_url" in m:
+        validate_factory(m)
+        return "factory", m
+    validate_manifest(m)
+    return "manifest", m
 
 
 # ---------------------------------------------------------------- default layout
@@ -187,6 +274,11 @@ def image_url(base, product, version, chip):
     parse_semver(version)
     _check_str("chip", chip, _CHIP, 16)
     return "%s/%s/%s/%s/firmware.bin" % (_base(base), product, version, chip)
+
+
+def factory_url(base, product, version, chip):
+    """<base>/<product>/<version>/<chip>/factory.bin"""
+    return image_url(base, product, version, chip)[:-len("firmware.bin")] + "factory.bin"
 
 
 def manifest_url(base, product, chip, channel):
@@ -343,8 +435,29 @@ def build_parser():
     m.add_argument("-o", "--output", default="manifest.json")
     p._fota_sub["manifest"] = m
 
-    s = sub.add_parser("sign", help="sign manifest.json (OpenBao transit, break-glass DER, or a TEST key)")
-    s.add_argument("--manifest", required=True)
+    f = sub.add_parser("factory", help="build factory.json (browser flashing descriptor) from a merged factory.bin")
+    f.add_argument("--bin", required=True, help="merged image (see `merge`)")
+    f.add_argument("--product", required=True)
+    f.add_argument("--chip", required=True)
+    f.add_argument("--board")
+    f.add_argument("--version", required=True)
+    f.add_argument("--url", help="factory image URL; default <base-url>/<product>/<version>/<chip>/factory.bin")
+    f.add_argument("--base-url", help="https base of the firmware host; required unless --url is given")
+    f.add_argument("--key-id", default=DEFAULT_KEY_ID)
+    f.add_argument("--released-at")
+    f.add_argument("-o", "--output", default="factory.json")
+    p._fota_sub["factory"] = f
+
+    g = sub.add_parser("merge", help="merge a PlatformIO build into one factory.bin (esptool merge_bin)")
+    g.add_argument("--build-dir", required=True, help="e.g. .pio/build/esp32c3 (bootloader/partitions/firmware.bin)")
+    g.add_argument("--chip", required=True)
+    g.add_argument("--esptool", help="esptool executable; default esptool.py or esptool on PATH")
+    g.add_argument("--flash-size", default="4MB")
+    g.add_argument("-o", "--output", default="factory.bin")
+    p._fota_sub["merge"] = g
+
+    s = sub.add_parser("sign", help="sign manifest.json or factory.json (OpenBao transit, break-glass DER, TEST key)")
+    s.add_argument("--manifest", required=True, help="manifest.json or factory.json")
     src = s.add_mutually_exclusive_group(required=True)
     src.add_argument("--key-name", help="OpenBao transit key name")
     src.add_argument("--der-signature", help="DER signature made elsewhere (YubiKey break-glass)")
@@ -356,8 +469,8 @@ def build_parser():
     s.add_argument("-o", "--output", help="default: <manifest>.sig")
     p._fota_sub["sign"] = s
 
-    v = sub.add_parser("verify", help="verify manifest + signature like the device does")
-    v.add_argument("--manifest", required=True)
+    v = sub.add_parser("verify", help="verify manifest.json or factory.json + signature (kind detected by its keys)")
+    v.add_argument("--manifest", required=True, help="manifest.json or factory.json")
     v.add_argument("--sig", help="default: <manifest>.sig")
     v.add_argument("--public-key", required=True)
     v.add_argument("--key-version", type=int)
@@ -396,9 +509,52 @@ def cmd_manifest(a):
         print("publish manifest -> %s (+ .sig)" % manifest_url(a.base_url, a.product, a.chip, a.channel))
 
 
+def cmd_factory(a):
+    if not a.url and not a.base_url:
+        raise ReleaseError("give --base-url (https://your-firmware-host) or an explicit --url")
+    url = a.url or factory_url(a.base_url, a.product, a.version, a.chip)
+    data = build_factory(a.bin, a.product, a.chip, a.version, url, a.key_id, board=a.board, released_at=a.released_at)
+    with open(a.output, "wb") as f:
+        f.write(data)                       # no trailing newline: these exact bytes are signed
+    print("wrote %s (%d bytes)" % (a.output, len(data)))
+    print("publish factory image -> %s (+ factory.json, factory.json.sig next to it)" % url)
+
+
+# Merged image offsets. The second-stage bootloader is at 0x1000 on ESP32 and ESP32-S2, at 0x0 on the newer chips.
+_BOOTLOADER_AT = {"esp32": "0x1000", "esp32s2": "0x1000"}
+
+
+def merge_command(esptool, chip, build_dir, output, flash_size="4MB"):
+    _check_str("chip", chip, _CHIP, 16)
+    parts = [(_BOOTLOADER_AT.get(chip, "0x0"), "bootloader.bin"), ("0x8000", "partitions.bin"),
+             ("0x10000", "firmware.bin")]
+    cmd = [esptool, "--chip", chip, "merge_bin", "-o", output, "--flash_mode", "dio", "--flash_size", flash_size]
+    for off, name in parts:
+        path = os.path.join(build_dir, name)
+        if not os.path.isfile(path):
+            raise ReleaseError("missing %s (build the firmware first)" % path)
+        cmd += [off, path]
+    return cmd
+
+
+def cmd_merge(a):
+    _check_str("chip", a.chip, _CHIP, 16)
+    esptool = a.esptool or shutil.which("esptool.py") or shutil.which("esptool")
+    if not esptool:
+        raise ReleaseError("esptool not found: install it (pip install esptool) or pass --esptool <path>")
+    cmd = merge_command(esptool, a.chip, a.build_dir, a.output, a.flash_size)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ReleaseError("esptool failed: %s" % e)
+    if r.returncode != 0:
+        raise ReleaseError("esptool merge_bin failed: %s" % (r.stderr or r.stdout).strip())
+    print("wrote %s (first install / recovery only: it overwrites NVS at 0x9000 and otadata)" % a.output)
+
+
 def cmd_sign(a):
     manifest = _read(a.manifest)
-    parse_manifest_bytes(manifest)
+    parse_signed_bytes(manifest)
     if a.key_name:
         sig = (sign_openbao_cli if a.backend == "cli" else sign_openbao_http)(manifest, a.key_name, a.mount)
     elif a.der_signature:
@@ -416,8 +572,19 @@ def cmd_sign(a):
 
 def cmd_verify(a):
     manifest = _read(a.manifest)
-    m = parse_manifest_bytes(manifest)
+    kind, m = parse_signed_bytes(manifest)
     n = verify_bytes(manifest, _read(a.sig or a.manifest + ".sig", "r"), _read(a.public_key), a.key_version)
+    if kind == "factory":
+        if a.bin:
+            image = _read(a.bin)
+            if len(image) != m["factory_size"]:
+                raise ReleaseError("factory image size %d, descriptor says factory_size %d" %
+                                   (len(image), m["factory_size"]))
+            if hashlib.sha256(image).hexdigest() != m["factory_sha256"]:
+                raise ReleaseError("factory image sha256 does not match factory_sha256")
+        print("OK: factory %s %s for %s signed by %s key version %d" % (m["product"], m["version"], m["chip"],
+                                                                       m["key_id"], n))
+        return
     if a.bin:
         image = _read(a.bin)
         if len(image) != m["size"] or hashlib.sha256(image).hexdigest() != m["sha256"]:
@@ -443,7 +610,7 @@ def cmd_c_key(a):
 def main(argv=None):
     a = build_parser().parse_args(argv)
     try:
-        {"manifest": cmd_manifest, "sign": cmd_sign, "verify": cmd_verify, "c-key": cmd_c_key}[a.cmd](a)
+        {"manifest": cmd_manifest, "factory": cmd_factory, "merge": cmd_merge, "sign": cmd_sign, "verify": cmd_verify, "c-key": cmd_c_key}[a.cmd](a)
     except (ReleaseError, OSError) as e:
         print("error: %s" % e, file=sys.stderr)
         return 1

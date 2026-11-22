@@ -386,5 +386,260 @@ class TestLocalAndVerify(Base):
         self.assertIn("-----BEGIN PUBLIC KEY-----", out)
 
 
+FACTORY_KEYS = ["schema", "product", "chip", "board", "version", "factory_url", "factory_sha256", "factory_size",
+                "key_id", "released_at"]
+
+
+class TestFactory(Base):
+    """Signed factory descriptor for browser flashing. Devices never read it; it is not an OTA manifest."""
+
+    def setUp(self):
+        super().setUp()
+        self.factory = self.path("factory.bin")
+        self.fimage = bytes((i * 11 + 5) & 0xFF for i in range(150000))
+        with open(self.factory, "wb") as f:
+            f.write(self.fimage)
+        self.priv = self.path("test-only-key.pem")
+        with open(self.priv, "wb") as f:
+            f.write(priv_pem(self.key))
+
+    def build(self, **over):
+        args = dict(product="example-psu", chip="esp32c3", version="1.4.0",
+                    url="https://fw.example.com/example-psu/1.4.0/esp32c3/factory.bin",
+                    key_id="test-only-esp-fleet-ota", released_at="2026-11-22T10:00:00Z", board=None)
+        args.update(over)
+        return fr.build_factory(self.factory, **args)
+
+    def cli_factory(self, *extra):
+        out = self.path("factory.json")
+        code, stdout, err = self.run_cli("factory", "--bin", self.factory, "--product", "example-psu", "--chip",
+                                         "esp32c3", "--version", "1.4.0", "--released-at", "2026-11-22T10:00:00Z",
+                                         "-o", out, *extra)
+        return code, stdout, err, out
+
+    def test_key_order_exact_without_board(self):
+        b = self.build()
+        keys = list(json.loads(b, object_pairs_hook=lambda p: [k for k, _ in p]))
+        self.assertEqual(keys, [k for k in FACTORY_KEYS if k != "board"])
+
+    def test_key_order_exact_with_board(self):
+        keys = list(json.loads(self.build(board="esp32-c3-devkitm-1"), object_pairs_hook=lambda p: [k for k, _ in p]))
+        self.assertEqual(keys, FACTORY_KEYS)
+
+    def test_exact_bytes_and_values(self):
+        b = self.build()
+        sha = hashlib.sha256(self.fimage).hexdigest()
+        self.assertEqual(b, ('{"schema":1,"product":"example-psu","chip":"esp32c3","version":"1.4.0",'
+                             '"factory_url":"https://fw.example.com/example-psu/1.4.0/esp32c3/factory.bin",'
+                             '"factory_sha256":"%s","factory_size":150000,"key_id":"test-only-esp-fleet-ota",'
+                             '"released_at":"2026-11-22T10:00:00Z"}' % sha).encode())
+        b.decode("ascii")
+
+    def test_no_extra_keys(self):
+        m = json.loads(self.build(board="b1"))
+        self.assertEqual(set(m), set(FACTORY_KEYS))
+        for k in ("url", "size", "sha256", "channel", "min_version"):
+            self.assertNotIn(k, m)
+
+    def test_released_at_defaults_to_now(self):
+        m = json.loads(fr.build_factory(self.factory, "example-psu", "esp32c3", "1.4.0",
+                                        "https://fw.example.com/f.bin", "k"))
+        self.assertRegex(m["released_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+
+    def test_validation_like_manifest(self):
+        bad = [dict(version="1.4"), dict(chip="ESP32C3"), dict(product="Bad Name"), dict(board="Bad Board"),
+               dict(url="http://fw.example.com/f.bin"), dict(url="https://fw.example.com/a b"), dict(key_id=""),
+               dict(released_at="yesterday")]
+        for b in bad:
+            with self.subTest(**b), self.assertRaises(fr.ReleaseError):
+                self.build(**b)
+        with open(self.factory, "wb"):
+            pass
+        with self.assertRaises(fr.ReleaseError):                       # empty image: factory_size must be > 0
+            self.build()
+
+    def test_factory_url_layout(self):
+        self.assertEqual(fr.factory_url("https://fw.example.com/", "example-psu", "1.4.0", "esp32s3"),
+                         "https://fw.example.com/example-psu/1.4.0/esp32s3/factory.bin")
+        for args in (("https://fw.example.com", "a/b", "1.0.0", "esp32c3"),
+                     ("https://fw.example.com", "p", "../1.0.0", "esp32c3"),
+                     ("http://fw.example.com", "p", "1.0.0", "esp32c3")):
+            with self.subTest(args=args), self.assertRaises(fr.ReleaseError):
+                fr.factory_url(*args)
+
+    def test_cli_default_url_and_key_id(self):
+        code, stdout, err, out = self.cli_factory("--base-url", "https://fw.example.com")
+        self.assertEqual(code, 0, err)
+        with open(out, "rb") as f:
+            data = f.read()
+        self.assertFalse(data.endswith(b"\n"))
+        m = json.loads(data)
+        self.assertEqual(m["factory_url"], "https://fw.example.com/example-psu/1.4.0/esp32c3/factory.bin")
+        self.assertEqual(m["key_id"], "esp-fleet-ota")
+        self.assertEqual(m["factory_size"], len(self.fimage))
+        self.assertIn("https://fw.example.com/example-psu/1.4.0/esp32c3/factory.bin", stdout)
+
+    def test_cli_explicit_url_and_requires_one(self):
+        code, _, err, out = self.cli_factory("--url", "https://fw.example.com/x/factory.bin")
+        self.assertEqual(code, 0, err)
+        with open(out, "rb") as f:
+            self.assertEqual(json.loads(f.read())["factory_url"], "https://fw.example.com/x/factory.bin")
+        os.remove(out)
+        code, _, err, out = self.cli_factory()
+        self.assertNotEqual(code, 0)
+        self.assertIn("--base-url", err)
+        self.assertFalse(os.path.exists(out))
+
+    def test_not_an_ota_manifest(self):
+        # the OTA manifest path must refuse a factory descriptor (the device parser does too: test_manifest)
+        with self.assertRaises(fr.ReleaseError):
+            fr.parse_manifest_bytes(self.build())
+        kind, m = fr.parse_signed_bytes(self.build())
+        self.assertEqual(kind, "factory")
+        kind, _ = fr.parse_signed_bytes(self.build_manifest())
+        self.assertEqual(kind, "manifest")
+        with self.assertRaises(fr.ReleaseError):                       # a mix of both is neither
+            mixed = json.loads(self.build())
+            mixed["channel"] = "stable"
+            fr.parse_signed_bytes(json.dumps(mixed, separators=(",", ":")).encode())
+
+    def sign_and_verify(self, *verify_extra):
+        code, _, err, out = self.cli_factory("--base-url", "https://fw.example.com", "--key-id", "test-only-k")
+        self.assertEqual(code, 0, err)
+        code, _, err = self.run_cli("sign", "--manifest", out, "--local-key", self.priv, "--public-key", self.pub)
+        self.assertEqual(code, 0, err)
+        return out, self.run_cli("verify", "--manifest", out, "--public-key", self.pub, *verify_extra)
+
+    def test_sign_verify_round_trip_with_bin(self):
+        out, (code, stdout, err) = self.sign_and_verify("--bin", self.factory)
+        self.assertEqual(code, 0, err)
+        self.assertIn("OK", stdout)
+        self.assertIn("factory", stdout)
+        self.assertTrue(os.path.exists(out + ".sig"))
+
+    def test_vault_signature_verifies(self):
+        data = self.build()
+        der = self.key.sign(data, ec.ECDSA(hashes.SHA256()))
+        self.assertEqual(fr.verify_bytes(data, "vault:v1:" + base64.b64encode(der).decode() + "\n",
+                                         pub_pem(self.key), key_version=1), 1)
+
+    def test_verify_detects_tampered_descriptor(self):
+        out, (code, _, err) = self.sign_and_verify()
+        self.assertEqual(code, 0, err)
+        with open(out, "rb") as f:
+            data = f.read()
+        with open(out, "wb") as f:
+            f.write(data.replace(b"1.4.0", b"1.4.1"))
+        code, _, err = self.run_cli("verify", "--manifest", out, "--public-key", self.pub)
+        self.assertNotEqual(code, 0)
+        with open(out, "wb") as f:
+            f.write(data + b"\n")                                     # even a trailing newline
+        code, _, _ = self.run_cli("verify", "--manifest", out, "--public-key", self.pub)
+        self.assertNotEqual(code, 0)
+
+    def test_verify_detects_wrong_bin(self):
+        out, (code, _, err) = self.sign_and_verify()
+        self.assertEqual(code, 0, err)
+        changed = bytearray(self.fimage)
+        changed[1000] ^= 1
+        with open(self.factory, "wb") as f:                            # same size, wrong sha256
+            f.write(bytes(changed))
+        code, _, err = self.run_cli("verify", "--manifest", out, "--public-key", self.pub, "--bin", self.factory)
+        self.assertNotEqual(code, 0)
+        self.assertIn("sha256", err)
+        with open(self.factory, "wb") as f:                            # wrong size
+            f.write(self.fimage + b"\xff")
+        code, _, err = self.run_cli("verify", "--manifest", out, "--public-key", self.pub, "--bin", self.factory)
+        self.assertNotEqual(code, 0)
+        self.assertIn("size", err)
+
+    def test_verify_signed_descriptor_with_wrong_size_field(self):
+        # a correctly signed descriptor whose factory_size disagrees with the image is still refused
+        m = json.loads(self.build())
+        m["factory_size"] += 1
+        data = json.dumps(m, separators=(",", ":")).encode()
+        out = self.path("factory.json")
+        with open(out, "wb") as f:
+            f.write(data)
+        with open(out + ".sig", "w") as f:
+            f.write(fr.sign_local(data, self.priv) + "\n")
+        code, _, err = self.run_cli("verify", "--manifest", out, "--public-key", self.pub, "--bin", self.factory)
+        self.assertNotEqual(code, 0)
+        self.assertIn("size", err)
+
+    def test_verify_wrong_key(self):
+        out, _ = self.sign_and_verify()
+        other = self.path("other.pem")
+        with open(other, "wb") as f:
+            f.write(pub_pem(make_key()))
+        code, _, _ = self.run_cli("verify", "--manifest", out, "--public-key", other)
+        self.assertNotEqual(code, 0)
+
+
+class TestMerge(Base):
+    def setUp(self):
+        super().setUp()
+        self.build_dir = self.path("build")
+        os.makedirs(self.build_dir)
+        for n in ("bootloader.bin", "partitions.bin", "firmware.bin"):
+            with open(os.path.join(self.build_dir, n), "wb") as f:
+                f.write(b"\x00" * 16)
+
+    def test_merge_argument_building(self):
+        calls = []
+
+        def fake_run(cmd, capture_output=None, text=None, check=None, timeout=None):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+        out = self.path("factory.bin")
+        with mock.patch.object(fr.shutil, "which", lambda name: "/fake/" + name if name == "esptool.py" else None), \
+                mock.patch.object(fr.subprocess, "run", fake_run):
+            code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32c3", "-o", out)
+        self.assertEqual(code, 0, err)
+        b = lambda n: os.path.join(self.build_dir, n)
+        self.assertEqual(calls, [["/fake/esptool.py", "--chip", "esp32c3", "merge_bin", "-o", out,
+                                  "--flash_mode", "dio", "--flash_size", "4MB",
+                                  "0x0", b("bootloader.bin"), "0x8000", b("partitions.bin"),
+                                  "0x10000", b("firmware.bin")]])
+
+    def test_merge_explicit_esptool_and_s3(self):
+        calls = []
+        with mock.patch.object(fr.subprocess, "run",
+                               lambda cmd, **k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", "")):
+            code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32s3",
+                                        "--esptool", "/opt/esptool", "-o", self.path("f.bin"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(calls[0][:3], ["/opt/esptool", "--chip", "esp32s3"])
+        self.assertIn("0x0", calls[0])
+
+    def test_merge_esptool_missing(self):
+        with mock.patch.object(fr.shutil, "which", lambda name: None):
+            code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32c3",
+                                        "-o", self.path("f.bin"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("esptool", err)
+        self.assertIn("install", err)
+
+    def test_merge_missing_build_file_and_bad_chip(self):
+        os.remove(os.path.join(self.build_dir, "partitions.bin"))
+        with mock.patch.object(fr.shutil, "which", lambda name: "/fake/esptool.py"):
+            code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32c3",
+                                        "-o", self.path("f.bin"))
+            self.assertNotEqual(code, 0)
+            self.assertIn("partitions.bin", err)
+            code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "ESP32;rm",
+                                        "-o", self.path("f.bin"))
+            self.assertNotEqual(code, 0)
+
+    def test_merge_esptool_failure_reported(self):
+        with mock.patch.object(fr.shutil, "which", lambda name: "/fake/esptool.py"), \
+                mock.patch.object(fr.subprocess, "run",
+                                  lambda cmd, **k: subprocess.CompletedProcess(cmd, 2, "", "boom")):
+            code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32c3",
+                                        "-o", self.path("f.bin"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("boom", err)
+
+
 if __name__ == "__main__":
     unittest.main()

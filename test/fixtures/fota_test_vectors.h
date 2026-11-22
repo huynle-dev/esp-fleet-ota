@@ -6,29 +6,32 @@
 static const char TEST_ONLY_MANIFEST[] =
     "{\"schema\":1,\"product\":\"demo-device\",\"chip\":\"esp32c3\",\"channel\":\"stable\",\"version\":\"1.1.0\",\"min_version\":\"1.0.0\",\"url\":\"https://fw.example.com/demo-device/1.1.0/esp32c3/firmware.bin\",\"size\":4,\"sha256\":\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\",\"key_id\":\"test-only-esp-fleet-ota\",\"released_at\":\"2026-11-22T10:00:00Z\"}";
 
+static const char TEST_ONLY_FACTORY[] =
+    "{\"schema\":1,\"product\":\"demo-device\",\"chip\":\"esp32c3\",\"version\":\"1.1.0\",\"factory_url\":\"https://fw.example.com/demo-device/1.1.0/esp32c3/factory.bin\",\"factory_sha256\":\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\",\"factory_size\":4,\"key_id\":\"test-only-esp-fleet-ota\",\"released_at\":\"2026-11-22T10:00:00Z\"}";
+
 static const char TEST_ONLY_KEY_A_PEM[] =
     "-----BEGIN PUBLIC KEY-----\n"
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExj9EBNOI/ycFN86H6I9eTBTNi3OR\n"
-    "IhBP1PJ3O5z3f0uoTO3f+PbWYFcOZv1Y2NJRfVx/dJQDCVjx9p3/7rplwg==\n"
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECAOfPotrQ1IHV81cBdqzW0yymQqE\n"
+    "qeoLvmpggf5piDiCDB0gMkF8xK5WuSTLEyJXR3I/X/KTS0PU2W8OkALItQ==\n"
     "-----END PUBLIC KEY-----\n";
 
-static const uint8_t TEST_ONLY_KEY_A_DER[] = {0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0xc6, 0x3f, 0x44, 0x04, 0xd3, 0x88, 0xff, 0x27, 0x05, 0x37, 0xce, 0x87, 0xe8, 0x8f, 0x5e, 0x4c, 0x14, 0xcd, 0x8b, 0x73, 0x91, 0x22, 0x10, 0x4f, 0xd4, 0xf2, 0x77, 0x3b, 0x9c, 0xf7, 0x7f, 0x4b, 0xa8, 0x4c, 0xed, 0xdf, 0xf8, 0xf6, 0xd6, 0x60, 0x57, 0x0e, 0x66, 0xfd, 0x58, 0xd8, 0xd2, 0x51, 0x7d, 0x5c, 0x7f, 0x74, 0x94, 0x03, 0x09, 0x58, 0xf1, 0xf6, 0x9d, 0xff, 0xee, 0xba, 0x65, 0xc2};
+static const uint8_t TEST_ONLY_KEY_A_DER[] = {0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x08, 0x03, 0x9f, 0x3e, 0x8b, 0x6b, 0x43, 0x52, 0x07, 0x57, 0xcd, 0x5c, 0x05, 0xda, 0xb3, 0x5b, 0x4c, 0xb2, 0x99, 0x0a, 0x84, 0xa9, 0xea, 0x0b, 0xbe, 0x6a, 0x60, 0x81, 0xfe, 0x69, 0x88, 0x38, 0x82, 0x0c, 0x1d, 0x20, 0x32, 0x41, 0x7c, 0xc4, 0xae, 0x56, 0xb9, 0x24, 0xcb, 0x13, 0x22, 0x57, 0x47, 0x72, 0x3f, 0x5f, 0xf2, 0x93, 0x4b, 0x43, 0xd4, 0xd9, 0x6f, 0x0e, 0x90, 0x02, 0xc8, 0xb5};
 
 static const char TEST_ONLY_KEY_B_PEM[] =
     "-----BEGIN PUBLIC KEY-----\n"
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZtkVmudbICmZqvyAxt1ndbIlIEwK\n"
-    "JDfL2hoHoM0/jJWnCTGUeO2/QLRkevsMJLr+q0zl4JJxUxU2/85Hk/i4iA==\n"
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEP+DQknVmriJaxBCj/ZoicymY7g0N\n"
+    "Tq5YQqg69qz124VIb4CndKJ2nHUFiZvkX5pmVAmso4xKCUDUWbnRzWUE8Q==\n"
     "-----END PUBLIC KEY-----\n";
 
 static const char TEST_ONLY_KEY_P384_PEM[] =
     "-----BEGIN PUBLIC KEY-----\n"
-    "MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEg/nGeTuDATOO34g6r0bD4TXAlY5+zL+o\n"
-    "zLRW4CjB9QbXJIhRhdgG+YHzC3wn8pA8UIkIi/kaMxRMRclpE0nMBeQBU1o0m5HH\n"
-    "8Ktzr7RCN8DBMTaPck7Km16+xtw3dLty\n"
+    "MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEdtMjIwCcSmYOoAcay8Jf8Ii9JMKif5XK\n"
+    "fydgO/7TXZ1oIOHyCp39ZBVSF7HyTXKgFqR0a+4sZkHmRilodqsij4ER5rIlW+GN\n"
+    "GTCwkWW5b7cY0/z/qWQrSPDR0MilAHyb\n"
     "-----END PUBLIC KEY-----\n";
 
-static const char TEST_ONLY_SIG_A_B64[] = "MEYCIQCaax7DfAw0q57TLHKx8xCrZQsd903MO6OSzwumCowVbAIhAPO2xiAjOL2zQReErYsYZY8EFXGjK0qg79S6CUMeyfJB";
-static const char TEST_ONLY_SIG_A_VAULT_V1[] = "vault:v1:MEYCIQCaax7DfAw0q57TLHKx8xCrZQsd903MO6OSzwumCowVbAIhAPO2xiAjOL2zQReErYsYZY8EFXGjK0qg79S6CUMeyfJB";
-static const char TEST_ONLY_SIG_A_VAULT_V2[] = "vault:v2:MEYCIQCaax7DfAw0q57TLHKx8xCrZQsd903MO6OSzwumCowVbAIhAPO2xiAjOL2zQReErYsYZY8EFXGjK0qg79S6CUMeyfJB";
-static const char TEST_ONLY_SIG_B_B64[] = "MEUCIA6YEWMhkr7gRlSyyy7F+iq05hjMXqhzAd+V9IICDJVQAiEAib6As2rZAaGXN6mzLqZJIMely54elhiZFvtQsOuz+s4=";
-static const char TEST_ONLY_SIG_B_VAULT_V2[] = "vault:v2:MEUCIA6YEWMhkr7gRlSyyy7F+iq05hjMXqhzAd+V9IICDJVQAiEAib6As2rZAaGXN6mzLqZJIMely54elhiZFvtQsOuz+s4=";
+static const char TEST_ONLY_SIG_A_B64[] = "MEQCIEj8VhAQCOoVWcCqqyXz2O0QPl/JACIINGnYYfG1Yg0ZAiBzUr+y4PNpA2uZHai1w2ZznqJanZj71BIeiwHFgtyjAA==";
+static const char TEST_ONLY_SIG_A_VAULT_V1[] = "vault:v1:MEQCIEj8VhAQCOoVWcCqqyXz2O0QPl/JACIINGnYYfG1Yg0ZAiBzUr+y4PNpA2uZHai1w2ZznqJanZj71BIeiwHFgtyjAA==";
+static const char TEST_ONLY_SIG_A_VAULT_V2[] = "vault:v2:MEQCIEj8VhAQCOoVWcCqqyXz2O0QPl/JACIINGnYYfG1Yg0ZAiBzUr+y4PNpA2uZHai1w2ZznqJanZj71BIeiwHFgtyjAA==";
+static const char TEST_ONLY_SIG_B_B64[] = "MEYCIQD/yXz5yz5mUoB37vgsuoQ98wo+CwJlOrcDqEcOHDlILgIhAN0jzN7/Ivki/iN+44oUL1PvSi3iuELB2HlPZJwa9zzt";
+static const char TEST_ONLY_SIG_B_VAULT_V2[] = "vault:v2:MEYCIQD/yXz5yz5mUoB37vgsuoQ98wo+CwJlOrcDqEcOHDlILgIhAN0jzN7/Ivki/iN+44oUL1PvSi3iuELB2HlPZJwa9zzt";

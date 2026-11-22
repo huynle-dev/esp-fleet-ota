@@ -107,3 +107,13 @@ The key table is configured per device; no code depends on a particular key id. 
 example default `--key-id`. Tests and the example use `test-only-esp-fleet-ota` / `test-only-esp-fleet-ota-breakglass`.
 The example's keys are generated with the fixtures (`tools/gen_test_vectors.py` writes both) and
 `test/test_example_keys` fails if they drift.
+
+## D21 Factory descriptor for browser flashing is a separate format
+`factory.json` (schema 1, keys in a fixed order: schema, product, chip, board?, version, factory_url, factory_sha256,
+factory_size, key_id, released_at) describes a merged full-flash image for first install and recovery from a web
+page. Devices never read it, so the OTA manifest format and the device parser are unchanged (deployed devices reject
+unknown keys); the device parser refuses a factory descriptor (`UnknownKey`, `test_factory_descriptor_is_refused_as_manifest`)
+and the tool detects the kind by `factory_url` and validates it strictly as that kind. It is signed with the same keys
+and the same `sign` path. Alternative: optional factory keys in the OTA manifest (rejected: breaks deployed parsers).
+`merge` wraps `esptool merge_bin` (bootloader 0x0, or 0x1000 on esp32/esp32s2; partitions 0x8000; app 0x10000; dio;
+4MB); a merged image overwrites NVS and otadata.

@@ -27,6 +27,8 @@ MUTATIONS = [
     ("crypto self-check ignored", "src/fleet_ota.cpp",
      "if (cryptoOk_ < 0) cryptoOk_ = cryptoSelfCheck(d_.sha, d_.ecdsa) ? 1 : 0;",
      "cryptoOk_ = 1;"),
+    ("manifest unknown-key rejection removed", "src/fota_manifest.cpp",
+     "    if (unknown) { bad = unknownName; return ManifestError::UnknownKey; }\n", ""),
     ("chip check removed", "src/fota_checks.cpp",
      "    if (empty(dev.chip) || strcmp(m.chip, dev.chip) != 0) return Reason::wrong_chip;\n", ""),
     ("product check removed", "src/fota_checks.cpp",

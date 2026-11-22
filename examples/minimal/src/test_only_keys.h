@@ -8,12 +8,12 @@ static const char kExampleTestOnlyBreakGlassKeyId[] = "test-only-esp-fleet-ota-b
 
 static const char kExampleTestOnlyOpenBaoPem[] =
     "-----BEGIN PUBLIC KEY-----\n"
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExj9EBNOI/ycFN86H6I9eTBTNi3OR\n"
-    "IhBP1PJ3O5z3f0uoTO3f+PbWYFcOZv1Y2NJRfVx/dJQDCVjx9p3/7rplwg==\n"
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECAOfPotrQ1IHV81cBdqzW0yymQqE\n"
+    "qeoLvmpggf5piDiCDB0gMkF8xK5WuSTLEyJXR3I/X/KTS0PU2W8OkALItQ==\n"
     "-----END PUBLIC KEY-----\n";
 
 static const char kExampleTestOnlyBreakGlassPem[] =
     "-----BEGIN PUBLIC KEY-----\n"
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZtkVmudbICmZqvyAxt1ndbIlIEwK\n"
-    "JDfL2hoHoM0/jJWnCTGUeO2/QLRkevsMJLr+q0zl4JJxUxU2/85Hk/i4iA==\n"
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEP+DQknVmriJaxBCj/ZoicymY7g0N\n"
+    "Tq5YQqg69qz124VIb4CndKJ2nHUFiZvkX5pmVAmso4xKCUDUWbnRzWUE8Q==\n"
     "-----END PUBLIC KEY-----\n";

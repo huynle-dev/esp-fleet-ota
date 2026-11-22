@@ -17,7 +17,7 @@ bootloader rolls back. Updates are triggered through an API meant to be exposed 
 |---|---|
 | Design and threat model | [docs/design.md](docs/design.md) |
 | Adding it to a device | [docs/integration.md](docs/integration.md) |
-| Releasing (manifest, OpenBao transit signing, key rotation, break-glass) | [docs/release.md](docs/release.md) |
+| Releasing (manifest, OpenBao transit signing, key rotation, break-glass, factory image for browser flashing) | [docs/release.md](docs/release.md) |
 | Decisions | [docs/decisions.md](docs/decisions.md) |
 | Verification report | [docs/verification.md](docs/verification.md) |
 
