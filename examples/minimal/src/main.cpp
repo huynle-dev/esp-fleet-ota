@@ -2,6 +2,7 @@
 //   s            ota_status (JSON)
 //   c            ota_check
 //   u <version>  ota_update <version>
+//   uf <version> ota_update <version> with force (installs a version this device rejected before)
 //   a on|off     auto-check
 // The trusted keys are TEST-ONLY (test_only_keys.h): a real device lists its OpenBao transit key versions and its
 // break-glass key (docs/release.md, docs/integration.md). WiFi credentials come from build flags (-DWIFI_SSID=..., -DWIFI_PASS=...).
@@ -66,7 +67,7 @@ static fota::EspFleetOta gOta(gCfg, gDev, gHooks, rootca_crt_bundle_start,
                               (size_t)(rootca_crt_bundle_end - rootca_crt_bundle_start));
 
 static void printStatus() {
-    char buf[512];
+    char buf[768];                     // formatStatusJson always fits in 768 bytes
     if (fota::formatStatusJson(gOta.ota().status(), buf, sizeof(buf))) Serial.println(buf);
 }
 
@@ -74,6 +75,12 @@ static void handleLine(String line) {
     line.trim();
     if (line == "s") { printStatus(); return; }
     if (line == "c") { Serial.printf("ota_check: %s\n", fota::reasonName(gOta.ota().check())); printStatus(); return; }
+    if (line.startsWith("uf ")) {         // force: also installs a version this device rejected before
+        String v = line.substring(3);
+        v.trim();
+        Serial.printf("ota_update (forced): %s\n", fota::reasonName(gOta.ota().update(v.c_str(), true)));
+        return;
+    }
     if (line.startsWith("u ")) {
         String v = line.substring(2);
         v.trim();
@@ -82,7 +89,7 @@ static void handleLine(String line) {
     }
     if (line == "a on") { gOta.ota().setAutoCheck(true, 6 * 3600000u); printStatus(); return; }
     if (line == "a off") { gOta.ota().setAutoCheck(false, 6 * 3600000u); printStatus(); return; }
-    Serial.println("commands: s | c | u <version> | a on|off");
+    Serial.println("commands: s | c | u <version> | uf <version> | a on|off");
 }
 
 void setup() {

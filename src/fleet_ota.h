@@ -16,6 +16,7 @@
 #include "fota_io.h"
 #include "fota_manifest.h"
 #include "fota_reason.h"
+#include "fota_rejected.h"
 #include "fota_result.h"
 #include "fota_signature.h"
 
@@ -67,6 +68,7 @@ struct OtaStatus {
     uint32_t progress_bytes, total_bytes;
     bool auto_check_enabled;
     uint32_t auto_check_interval_ms;
+    const RejectedVersions* rejected;        // versions refused as `rejected` (oldest first); never null from status()
 };
 
 class FleetOta {
@@ -83,7 +85,9 @@ public:
     Reason check();
     // Start installing `expectedVersion`. Re-checks first; refuses when the available version differs, when the device
     // hook says no, or while busy. Returns Reason::none when the download started (progress via loop()).
-    Reason update(const char* expectedVersion);
+    // `force` = true installs a version that is in the rejected list (it failed its self-test or was rolled back here
+    // before); it bypasses only that refusal, every other check still applies. Default: not forced.
+    Reason update(const char* expectedVersion, bool force = false);
 
     void setAutoCheck(bool enabled, uint32_t intervalMs);
 
@@ -93,6 +97,8 @@ public:
 
 private:
     Reason fetch(const char* url, char* buf, size_t cap, size_t& len);
+    Reason checkWith(bool force);
+    void rememberRejected(const char* version);
     Reason verifyAndCheck(const char* text, size_t len, const char* sig, size_t sigLen, Manifest& out);
     void finishFailure(ResultKind kind, Reason r, const char* version);
     void loopPendingVerify();
@@ -109,6 +115,7 @@ private:
     bool haveAvailable_ = false;
     Reason lastCheck_ = Reason::none;
     LastResult last_;
+    RejectedVersions rejected_;   // loaded in begin(), persisted under "rejected"
     uint64_t verifyDeadline_ = 0, rebootAt_ = 0, nextAuto_ = 0;
     char pendingVersion_[33] = {0};
     char pendingMin_[33] = {0};
@@ -116,8 +123,9 @@ private:
 };
 
 // {"current_version":..,"running_slot":..,"state":..,"last_result":{"kind":..,"reason":..,"version":..},
-//  "available_version":..|null,"last_check":..,"progress":..,"total":..,"auto_check":{"enabled":..,"interval_s":..}}
-// Returns the length written, or 0 when it does not fit in cap.
+//  "available_version":..|null,"last_check":..,"progress":..,"total":..,"auto_check":{"enabled":..,"interval_s":..}
+//  [,"rejected":["<v>",...]]}        (the "rejected" key only when the list is not empty, oldest first)
+// Returns the length written, or 0 when it does not fit in cap (768 bytes always fit).
 size_t formatStatusJson(const OtaStatus& s, char* out, size_t cap);
 
 } // namespace fota

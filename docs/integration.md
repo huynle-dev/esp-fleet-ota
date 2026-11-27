@@ -135,18 +135,27 @@ void setup() { /* watchdog, wifi ... */ gOta.begin(); }
 void loop()  { esp_task_wdt_reset(); gOta.loop(); /* ... */ }
 ```
 
-`begin()` reconciles the boot (pending verify, rolled back, confirmed) and loads `last_result` from NVS (namespace
-`fleet_ota`, keys `last_result`, `floor`, `pending`). `loop()` runs the self-test, advances a download by one chunk,
+`begin()` reconciles the boot (pending verify, rolled back, confirmed) and loads `last_result` and the rejected
+versions from NVS (namespace `fleet_ota`, keys `last_result`, `floor`, `pending`, `rejected`). `loop()` runs the self-test, advances a download by one chunk,
 reboots after `reboot_delay_ms` (2 s, so the MCP reply goes out first) and runs the optional auto-check.
 
 ## 7. MCP tools and MQTT
 
 | Tool | Arguments | Calls | Returns |
 |---|---|---|---|
-| `ota_status` | none | `status()` + `formatStatusJson()` | `{"current_version","running_slot","state","last_result":{kind,reason,version},"available_version","last_check","progress","total","auto_check":{enabled,interval_s}}` |
+| `ota_status` | none | `status()` + `formatStatusJson()` | `{"current_version","running_slot","state","last_result":{kind,reason,version},"available_version","last_check","progress","total","auto_check":{enabled,interval_s}[,"rejected":[versions]]}` |
 | `ota_check` | none | `check()` | `{"result": reasonName(r), ...status}`; never installs |
-| `ota_update` | `{"version": "1.4.0"}` (required) | `update(version)` | `{"result": "none"}` when the download started, else the refusal reason (`version_mismatch`, `device_refused`, `busy`, any check reason) |
+| `ota_update` | `{"version": "1.4.0"}` (required), `"force": true` (optional, default false) | `update(version, force)` | `{"result": "none"}` when the download started, else the refusal reason (`version_mismatch`, `device_refused`, `busy`, `rejected`, any check reason) |
 | `ota_auto` (optional) | `{"enabled": bool, "interval_s": n}` | `setAutoCheck()` | status; interval is clamped to >= 3600 s |
+
+**Rejected versions.** When an installed image fails its self-test, misses the deadline, cannot be marked valid or is
+rolled back by the bootloader, its version is remembered (NVS key `rejected`, the last 8, oldest evicted). Later offers
+of that version are refused with `rejected` by `ota_check`, `ota_update` and the auto-check, even when the release is
+re-signed, re-built (`+build` metadata) or re-hosted: the comparison is by version. `ota_update` with `"force": true`
+(`update(version, true)`) installs it anyway; only this refusal is bypassed, every other check still applies. A
+confirmed install forgets every remembered version <= the installed one. `status().rejected` (never null, oldest
+first) and the `"rejected"` array in the status JSON (present only when the list is not empty) let the product show
+the list; give `formatStatusJson` a 768-byte buffer.
 
 `check()` blocks for the TLS handshakes and two small downloads (bounded by `fetch_timeout_ms` each); run it from the
 same task as the MCP server, not from an ISR or a callback that holds other locks. MQTT: publish the status JSON

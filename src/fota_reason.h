@@ -46,6 +46,7 @@ enum class Reason : uint8_t {
     boot_failed,            // the new image never confirmed (bootloader rolled back)
     store_failed,
     crypto_self_check_failed,   // the SHA-256/ECDSA backend failed its known-answer test: fail closed
+    rejected,               // this version failed its self-test or was rolled back here before (update(v, force) overrides)
     _count
 };
 

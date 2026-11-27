@@ -98,7 +98,7 @@ public:
                 size_t sigLen) override;
 };
 
-// Everything wired together. Keep ONE instance with static storage (it is ~1 KB plus the TLS client).
+// Everything wired together. Keep ONE instance with static storage (it is ~1.3 KB plus the TLS client).
 class EspFleetOta {
 public:
     EspFleetOta(const OtaConfig& cfg, const DeviceIdentity& dev, IDeviceHooks& hooks, const uint8_t* caBundle,

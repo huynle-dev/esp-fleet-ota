@@ -15,6 +15,7 @@ const char* const kNames[] = {
     "finalize_failed",
     "self_test_failed", "self_test_timeout", "boot_failed", "store_failed",
     "crypto_self_check_failed",
+    "rejected",
 };
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == (size_t)Reason::_count, "one name per Reason");
 } // namespace

@@ -128,3 +128,24 @@ manifest. Devices built with an older release refuse `dev` (`manifest_invalid`),
 manifest to a channel path an older device reads; dev manifests live under `<product>/<chip>/dev/` only.
 Tests: `test_channel_set`, `test_dev_channel_only_for_dev_devices`, tools `test_channel_set_stable_beta_dev`,
 `test_cli_manifest_and_verify_dev_channel`.
+
+## D23 Rejected-version memory
+Context: an image that fails its self-test (or is rolled back) is still the newest signed release, so the next check,
+or the auto-check, would offer and install it again, in a loop of downloads, reboots and rollbacks.
+Decision: when an installed image fails after the reboot (`self_test_failed`, `self_test_timeout`, a failed
+`markValid()`, or a bootloader rollback detected at boot) its version is remembered in the store key `rejected`
+(comma-separated, oldest first, at most 8, oldest evicted, missing key = empty, invalid entries dropped when loading).
+An offer of a remembered version is refused with the new reason `rejected` (appended to the reason table; no code is
+renumbered) after all other checks passed, unless `update(version, force = true)` is called; auto-check never forces.
+Versions are compared by semver precedence, never by signature, hash or URL, so re-signing, re-building (`+build`)
+or re-hosting the same version does not bypass it. A confirmed install of version V forgets every entry <= V.
+Download, hash and write failures are not remembered (the image never ran). The list is exposed as
+`OtaStatus::rejected` and as a `"rejected"` array in the status JSON, present only when non-empty so the JSON of a
+device with an empty list is unchanged.
+Consequences: a product that wants to retry a failed version must expose the force flag (e.g. `ota_update` with
+`"force": true`); FleetOta grows by ~265 bytes; one NVS write per failed install and at most one per confirmed install.
+Alternatives: remember by sha256 (rejected: a re-signed or re-built image of the same version would loop again);
+refuse forever with no override (rejected: a self-test that failed for an external reason could never be retried).
+Tests: `test/test_rejected`, `test_failed_install_remembers_version`, `test_rejected_version_refused_unless_forced`,
+`test_resigned_same_version_still_refused`, `test_force_does_not_bypass_other_checks`,
+`test_confirmed_newer_install_clears_older_entries`, `test_reason_codes_append_only`.

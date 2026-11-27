@@ -88,6 +88,7 @@ void FleetOta::setAutoCheck(bool enabled, uint32_t intervalMs) {
 void FleetOta::begin() {
     const uint64_t now = d_.clock.nowMs();
     last_ = loadLastResult(d_.store);
+    rejected_ = loadRejected(d_.store);
     nextAuto_ = now + cfg_.auto_check.interval_ms;
 
     char rec[80];
@@ -117,6 +118,7 @@ void FleetOta::begin() {
         } else {
             last_ = makeResult(ResultKind::rolled_back, Reason::boot_failed, pendingVersion_);
             saveLastResult(d_.store, last_);
+            rememberRejected(pendingVersion_);
             d_.store.remove(kPendingKey);
             state_ = State::idle;
         }
@@ -135,8 +137,13 @@ void FleetOta::confirmInstalled(const char* version, const char* minVersion) {
     if (floor[0] && strcmp(floor, oldFloor) != 0) d_.store.put(kFloorKey, floor);
     last_ = makeResult(ResultKind::ok, Reason::none, version);
     saveLastResult(d_.store, last_);
+    if (rejected_.clearUpTo(version)) saveRejected(d_.store, rejected_);
     d_.store.remove(kPendingKey);
     state_ = State::ok;
+}
+
+void FleetOta::rememberRejected(const char* version) {
+    if (rejected_.add(version)) saveRejected(d_.store, rejected_);
 }
 
 void FleetOta::loop() {
@@ -175,6 +182,7 @@ void FleetOta::loopPendingVerify() {
     // Record first: markInvalidAndReboot does not return on the device.
     last_ = makeResult(ResultKind::rolled_back, fail, pendingVersion_);
     saveLastResult(d_.store, last_);
+    rememberRejected(pendingVersion_);
     d_.store.remove(kPendingKey);
     state_ = State::failed;
     d_.platform.markInvalidAndReboot();
@@ -238,7 +246,9 @@ Reason FleetOta::fetch(const char* url, char* buf, size_t cap, size_t& len) {
     return r;
 }
 
-Reason FleetOta::check() {
+Reason FleetOta::check() { return checkWith(false); }
+
+Reason FleetOta::checkWith(bool force) {
     switch (state_) {
         case State::downloading: case State::verifying: case State::rebooting: case State::pending_verify:
             return Reason::busy;
@@ -292,6 +302,7 @@ Reason FleetOta::check() {
         CheckConfig cc{cfg_.channel, cfg_.allowed_hosts, cfg_.allowed_host_count};
         r = checkManifest(m, dev_, cc, floor, d_.writer.spareSize());
     }
+    if (r == Reason::none && !force && rejected_.contains(m.version)) r = Reason::rejected;
     lastCheck_ = r;
     if (r == Reason::none) {
         available_ = m;
@@ -303,13 +314,13 @@ Reason FleetOta::check() {
     return r;
 }
 
-Reason FleetOta::update(const char* expectedVersion) {
+Reason FleetOta::update(const char* expectedVersion, bool force) {
     switch (state_) {
         case State::downloading: case State::verifying: case State::rebooting: case State::pending_verify:
             return Reason::busy;
         default: break;
     }
-    Reason r = check();
+    Reason r = checkWith(force);
     if (r != Reason::none) {
         finishFailure(ResultKind::refused, r, expectedVersion);
         return r;
@@ -347,7 +358,8 @@ OtaStatus FleetOta::status() const {
                      busy ? dl_.received() : 0,
                      busy ? dl_.total() : 0,
                      cfg_.auto_check.enabled,
-                     cfg_.auto_check.interval_ms};
+                     cfg_.auto_check.interval_ms,
+                     &rejected_};
 }
 
 size_t formatStatusJson(const OtaStatus& s, char* out, size_t cap) {
@@ -365,13 +377,34 @@ size_t formatStatusJson(const OtaStatus& s, char* out, size_t cap) {
     int n = snprintf(out, cap,
                      "{\"current_version\":\"%s\",\"running_slot\":\"%s\",\"state\":\"%s\","
                      "\"last_result\":{\"kind\":\"%s\",\"reason\":\"%s\",\"version\":\"%s\"},\"available_version\":%s,"
-                     "\"last_check\":\"%s\",\"progress\":%lu,\"total\":%lu,\"auto_check\":{\"enabled\":%s,\"interval_s\":%lu}}",
+                     "\"last_check\":\"%s\",\"progress\":%lu,\"total\":%lu,\"auto_check\":{\"enabled\":%s,\"interval_s\":%lu}",
                      cur, slot, stateName(s.state), resultKindName(s.last_result.kind), reasonName(s.last_result.reason),
                      s.last_result.version, avail, reasonName(s.last_check), (unsigned long)s.progress_bytes,
                      (unsigned long)s.total_bytes, s.auto_check_enabled ? "true" : "false",
                      (unsigned long)(s.auto_check_interval_ms / 1000));
     if (n < 0 || (size_t)n >= cap) { out[0] = 0; return 0; }
-    return (size_t)n;
+    size_t len = (size_t)n;
+    // Appends `s` at len; false when it (plus the closing brace and NUL) does not fit.
+    auto append = [&](const char* s) {
+        const size_t k = strlen(s);
+        if (len + k + 2 > cap) return false;
+        memcpy(out + len, s, k + 1);
+        len += k;
+        return true;
+    };
+    if (s.rejected && s.rejected->count) {
+        bool ok = append(",\"rejected\":[");
+        for (uint8_t i = 0; ok && i < s.rejected->count; i++) {
+            char v[34];
+            jsonSafe(v, sizeof(v), s.rejected->version[i]);
+            ok = (i == 0 || append(",")) && append("\"") && append(v) && append("\"");
+        }
+        if (!ok || !append("]")) { out[0] = 0; return 0; }
+    }
+    if (len + 2 > cap) { out[0] = 0; return 0; }
+    out[len++] = '}';
+    out[len] = 0;
+    return len;
 }
 
 } // namespace fota

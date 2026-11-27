@@ -71,6 +71,21 @@ static void test_kind_names() {
     TEST_ASSERT_EQUAL_STRING("refused", resultKindName(ResultKind::refused));
 }
 
+// Reason codes are persisted and reported by number and name: new ones are appended, existing ones never move.
+static void test_reason_codes_append_only() {
+    TEST_ASSERT_EQUAL_STRING("none", reasonName((Reason)0));
+    TEST_ASSERT_EQUAL_STRING("unknown_key_id", reasonName((Reason)5));
+    TEST_ASSERT_EQUAL_STRING("wrong_channel", reasonName((Reason)11));
+    TEST_ASSERT_EQUAL_STRING("boot_failed", reasonName((Reason)32));
+    TEST_ASSERT_EQUAL_STRING("crypto_self_check_failed", reasonName((Reason)34));
+    TEST_ASSERT_EQUAL_STRING("rejected", reasonName((Reason)35));
+    Reason r = Reason::none;
+    TEST_ASSERT_TRUE(reasonFromName("rejected", r));
+    TEST_ASSERT_EQUAL_INT(35, (int)r);
+    LastResult x;
+    TEST_ASSERT_TRUE(parseLastResult("refused|rejected|1.4.0", x));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_format);
@@ -78,5 +93,6 @@ int main(int, char**) {
     RUN_TEST(test_rejects_corrupt);
     RUN_TEST(test_store_round_trip);
     RUN_TEST(test_kind_names);
+    RUN_TEST(test_reason_codes_append_only);
     return UNITY_END();
 }

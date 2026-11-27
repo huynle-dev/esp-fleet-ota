@@ -12,9 +12,11 @@ device --GET manifest.json------> fw.example.com      device --(re-check)--> sam
    strict parse (<= 2 KB) -> key (key_id, N) -> ECDSA P-256 --GET firmware.bin--> stream into spare slot,
    over the EXACT manifest bytes -> policy checks              SHA-256 on the fly, <= 4 KB buffer
    (product, chip, board, channel, newer, floor, size,       --hash ok--> esp_ota_end + set_boot_partition
-    https + host allow-list)                                 --reboot--> pending_verify --selfTest()-->
-                                                               pass: mark valid, raise floor, last_result ok
+    https + host allow-list, not a rejected version          --reboot--> pending_verify --selfTest()-->
+    unless ota_update forces it)                               pass: mark valid, raise floor, last_result ok,
+                                                                     forget rejected versions <= it
                                                                fail / 120 s deadline: last_result rolled_back,
+                                                               remember the version as rejected,
                                                                mark invalid + reboot -> previous image
 ```
 
@@ -35,6 +37,7 @@ failed`.
 | `src/fota_checks.*` | policy checks before download, URL host extraction, floor update | no |
 | `src/fota_download.*` | incremental download + hash + write, clean abort | no |
 | `src/fota_result.*` | `last_result` text form and persistence | no |
+| `src/fota_rejected.*` | rejected-version memory: bounded list (8), text form and persistence | no |
 | `src/fleet_ota.*` | the state machine, `check()`, `update()`, `status()`, JSON status | no |
 | `src/fota_io.h` | device interfaces: clock/watchdog, HTTPS source, partition writer, OTA platform, store, hooks | no |
 | `src/fota_target.h` | `FOTA_CHIP` (= `CONFIG_IDF_TARGET`), `FOTA_BOARD` (build flag) | no |

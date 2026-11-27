@@ -490,6 +490,142 @@ static void test_state_names() {
     for (int i = 0; i < 9; i++) TEST_ASSERT_EQUAL_STRING(names[i], stateName((State)i));
 }
 
+// ------------------------------------------------------------------ rejected-version memory
+static const RejectedVersions& rejectedList() {
+    const RejectedVersions* r = R->ota->status().rejected;
+    TEST_ASSERT_NOT_NULL(r);
+    return *r;
+}
+// Every way an installed image can fail after the reboot remembers its version.
+static void test_failed_install_remembers_version() {
+    struct Case { const char* name; int how; } cases[] = {{"self_test_failed", 0}, {"self_test_timeout", 1},
+                                                          {"mark_valid_failed", 2}, {"bootloader_rollback", 3}};
+    for (auto& c : cases) {
+        setUp();
+        R->store.kv["rejected"] = "1.3.9";
+        if (c.how == 3) {
+            R->store.kv["pending"] = "1.4.0|1.2.0";          // 1.3.2 still running, not pending
+            R->boot();
+        } else {
+            bootIntoNewImage();
+            if (c.how == 0) R->hooks.script = {SelfTest::fail};
+            if (c.how == 1) R->hooks.script = {SelfTest::pending};
+            if (c.how == 2) R->platform.markValidOk = false;
+            R->boot();
+            if (c.how == 1) R->clock.now += R->cfg.self_test_deadline_ms + 1;
+            R->ota->loop();
+        }
+        TEST_ASSERT_EQUAL_STRING_MESSAGE("1.3.9,1.4.0", R->store.kv["rejected"].c_str(), c.name);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, rejectedList().count, c.name);
+    }
+}
+
+static void test_download_failure_is_not_remembered() {
+    Release r; R->publish(r); R->boot();
+    R->http.routes[IURL].body[100] ^= 1;
+    R->ota->update("1.4.0");
+    R->runLoop(1000);
+    TEST_ASSERT_EQUAL_STRING("failed|hash_mismatch|1.4.0", R->last().c_str());
+    TEST_ASSERT_EQUAL_INT(0, (int)R->store.kv.count("rejected"));
+}
+
+static void test_rejected_version_refused_unless_forced() {
+    R->store.kv["rejected"] = "1.4.0";
+    Release r; R->publish(r); R->boot();
+    TEST_ASSERT_EQUAL_STRING("rejected", REASON(R->ota->check()));
+    TEST_ASSERT_EQUAL_STRING("idle", stateName(R->ota->state()));
+    TEST_ASSERT_EQUAL_STRING("rejected", REASON(R->ota->status().last_check));
+    TEST_ASSERT_EQUAL_STRING("rejected", REASON(R->ota->update("1.4.0")));
+    TEST_ASSERT_EQUAL_STRING("rejected", REASON(R->ota->update("1.4.0", false)));
+    TEST_ASSERT_FALSE(R->writer.begun);
+    TEST_ASSERT_EQUAL_INT(0, R->hooks.beforeCalls);
+    TEST_ASSERT_EQUAL_STRING("refused|rejected|1.4.0", R->last().c_str());
+    TEST_ASSERT_EQUAL_STRING("none", REASON(R->ota->update("1.4.0", true)));      // explicit force
+    TEST_ASSERT_EQUAL_STRING("downloading", stateName(R->ota->state()));
+    R->runLoop(1000);
+    TEST_ASSERT_EQUAL_STRING("rebooting", stateName(R->ota->state()));
+    TEST_ASSERT_EQUAL_STRING("1.4.0", R->store.kv["rejected"].c_str());           // kept until it is confirmed
+}
+
+// The memory is by version: a re-signed, re-built or re-hosted release of the same version is still refused.
+static void test_resigned_same_version_still_refused() {
+    R->store.kv["rejected"] = "1.4.0";
+    Release r;
+    r.version = "1.4.0+rebuild.2";
+    r.url = "https://fw.example.com/example-psu/1.4.0-again/esp32c3/firmware.bin";
+    r.image.assign(25000, 'x');                                  // other bytes, other sha256, fresh signature
+    R->publish(r); R->boot();
+    TEST_ASSERT_EQUAL_STRING("rejected", REASON(R->ota->check()));
+    TEST_ASSERT_EQUAL_STRING("rejected", REASON(R->ota->update("1.4.0+rebuild.2")));
+}
+
+static void test_force_does_not_bypass_other_checks() {
+    R->store.kv["rejected"] = "1.4.0";
+    R->store.kv["floor"] = "1.5.0";
+    Release r; R->publish(r); R->boot();
+    TEST_ASSERT_EQUAL_STRING("below_floor", REASON(R->ota->update("1.4.0", true)));
+    setUp();
+    R->store.kv["rejected"] = "1.4.0";
+    Release t; R->publish(t, "\n"); R->boot();                     // tampered
+    TEST_ASSERT_EQUAL_STRING("signature_invalid", REASON(R->ota->update("1.4.0", true)));
+    setUp();
+    R->store.kv["rejected"] = "1.4.0";
+    Release v; R->publish(v); R->boot();
+    TEST_ASSERT_EQUAL_STRING("version_mismatch", REASON(R->ota->update("1.5.0", true)));
+    R->hooks.allow = false;
+    TEST_ASSERT_EQUAL_STRING("device_refused", REASON(R->ota->update("1.4.0", true)));
+    TEST_ASSERT_FALSE(R->writer.begun);
+}
+
+static void test_other_versions_not_affected() {
+    R->store.kv["rejected"] = "1.4.0,1.6.0";
+    Release r; r.version = "1.5.0"; R->publish(r); R->boot();
+    TEST_ASSERT_EQUAL_STRING("none", REASON(R->ota->check()));
+}
+
+static void test_auto_check_never_forces() {
+    R->store.kv["rejected"] = "1.4.0";
+    Release r; R->publish(r); R->boot();
+    R->ota->setAutoCheck(true, kMinAutoCheckIntervalMs);
+    R->clock.now += kMinAutoCheckIntervalMs + 1; R->ota->loop();
+    TEST_ASSERT_EQUAL_STRING("idle", stateName(R->ota->state()));
+    TEST_ASSERT_FALSE(R->writer.begun);
+}
+
+static void test_confirmed_newer_install_clears_older_entries() {
+    R->store.kv["rejected"] = "1.4.0,1.6.0,1.5.0";
+    R->dev.running_version = "1.5.0";
+    R->platform.pending = true;
+    R->store.kv["pending"] = "1.5.0|1.2.0";
+    R->boot();
+    R->ota->loop();
+    TEST_ASSERT_EQUAL_STRING("ok|none|1.5.0", R->last().c_str());
+    TEST_ASSERT_EQUAL_STRING("1.6.0", R->store.kv["rejected"].c_str());
+    TEST_ASSERT_EQUAL_UINT8(1, rejectedList().count);
+    TEST_ASSERT_EQUAL_STRING("1.6.0", rejectedList().version[0]);
+}
+
+static void test_rejected_list_is_bounded() {
+    R->store.kv["rejected"] = "1.0.1,1.0.2,1.0.3,1.0.4,1.0.5,1.0.6,1.0.7,1.0.8";
+    bootIntoNewImage();
+    R->hooks.script = {SelfTest::fail};
+    R->boot();
+    R->ota->loop();
+    TEST_ASSERT_EQUAL_STRING("1.0.2,1.0.3,1.0.4,1.0.5,1.0.6,1.0.7,1.0.8,1.4.0", R->store.kv["rejected"].c_str());
+}
+
+static void test_status_json_lists_rejected_versions() {
+    R->store.kv["rejected"] = "1.4.0,1.5.0-rc.1";
+    R->boot();
+    OtaStatus s = R->ota->status();
+    TEST_ASSERT_EQUAL_UINT8(2, rejectedList().count);
+    TEST_ASSERT_EQUAL_STRING("1.4.0", rejectedList().version[0]);
+    char buf[768];
+    TEST_ASSERT_TRUE(formatStatusJson(s, buf, sizeof(buf)) > 0);
+    const char* tail = ",\"rejected\":[\"1.4.0\",\"1.5.0-rc.1\"]}";
+    TEST_ASSERT_EQUAL_STRING(tail, buf + strlen(buf) - strlen(tail));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_check_finds_update_without_installing);
@@ -527,5 +663,15 @@ int main(int, char**) {
     RUN_TEST(test_status_and_json);
     RUN_TEST(test_fails_closed_when_crypto_self_check_fails);
     RUN_TEST(test_state_names);
+    RUN_TEST(test_failed_install_remembers_version);
+    RUN_TEST(test_download_failure_is_not_remembered);
+    RUN_TEST(test_rejected_version_refused_unless_forced);
+    RUN_TEST(test_resigned_same_version_still_refused);
+    RUN_TEST(test_force_does_not_bypass_other_checks);
+    RUN_TEST(test_other_versions_not_affected);
+    RUN_TEST(test_auto_check_never_forces);
+    RUN_TEST(test_confirmed_newer_install_clears_older_entries);
+    RUN_TEST(test_rejected_list_is_bounded);
+    RUN_TEST(test_status_json_lists_rejected_versions);
     return UNITY_END();
 }
