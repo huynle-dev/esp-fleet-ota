@@ -117,3 +117,14 @@ and the tool detects the kind by `factory_url` and validates it strictly as that
 and the same `sign` path. Alternative: optional factory keys in the OTA manifest (rejected: breaks deployed parsers).
 `merge` wraps `esptool merge_bin` (bootloader 0x0, or 0x1000 on esp32/esp32s2; partitions 0x8000; app 0x10000; dio;
 4MB); a merged image overwrites NVS and otadata.
+
+## D22 Channel `dev`
+Context: bench and development builds need their own release stream that stable and beta devices never take.
+Decision: the closed channel set becomes `stable | beta | dev` in the device parser and in `fota_release.py`
+(`manifest`, `verify`, the layout helper); any other value is still `BadValue`/refused, so the parser stays flat,
+allocation-free and fail-closed (D2), and every manifest a deployed device can fetch today parses exactly as before.
+Consequences: `cfg.channel` must equal the manifest's channel, so only a device configured for `dev` installs a dev
+manifest. Devices built with an older release refuse `dev` (`manifest_invalid`), so no server may publish a dev
+manifest to a channel path an older device reads; dev manifests live under `<product>/<chip>/dev/` only.
+Tests: `test_channel_set`, `test_dev_channel_only_for_dev_devices`, tools `test_channel_set_stable_beta_dev`,
+`test_cli_manifest_and_verify_dev_channel`.

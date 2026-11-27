@@ -93,8 +93,11 @@ cfg.keys = kKeys; cfg.key_count = 2;
 - Key table rules: an entry is (key_id, N). `vault:vN:` signatures need an entry with that N; bare base64
   signatures need an entry with N = 0. Unknown key_id: `unknown_key_id`; known key_id without that N:
   `key_version_mismatch`. Keep one entry per trusted OpenBao key version (docs/release.md, rotation).
-- Channel: `cfg.channel` must equal the manifest's channel; switching a device to beta means changing both the
-  channel and the manifest URL.
+- Channel: `cfg.channel` (`stable`, `beta` or `dev`) must equal the manifest's channel; switching a device to beta or
+  dev means changing both the channel and the manifest URL. A manifest naming `dev` is only ever accepted by a device
+  configured for the dev channel (`wrong_channel` otherwise). Devices running a release of this library from before
+  `dev` existed refuse a dev manifest outright (`manifest_invalid`), so a server must never publish a dev manifest to
+  a channel path that an older device reads (`stable`/`beta`); dev manifests go to `<product>/<chip>/dev/` only.
 
 ## 5. Device hooks
 

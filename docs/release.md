@@ -42,7 +42,10 @@ tools/fota_release.py manifest --bin /tmp/rel/firmware.bin \
 # key_id = esp-fleet-ota                                                  (default; --key-id for break-glass)
 ```
 
-The command prints where to publish the image and the manifest.
+The command prints where to publish the image and the manifest. `--channel` is `stable` (default), `beta` or `dev`.
+**Publish a dev manifest only to the dev path** (`<product>/<chip>/dev/manifest.json`): only devices configured for
+the dev channel accept it, and devices built with an older release of this library refuse the `dev` value as an
+invalid manifest.
 
 The file is compact JSON with no trailing newline. **Do not edit or reformat it after signing**: the signature covers
 its exact bytes, and any change, even an added newline, makes every device refuse it (`signature_invalid`).

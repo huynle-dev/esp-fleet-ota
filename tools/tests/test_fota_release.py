@@ -108,6 +108,34 @@ class TestManifest(Base):
             with self.subTest(**b), self.assertRaises(fr.ReleaseError):
                 self.build_manifest(**b)
 
+    def test_channel_set_stable_beta_dev(self):
+        for ch in ("stable", "beta", "dev"):
+            with self.subTest(channel=ch):
+                self.assertEqual(json.loads(self.build_manifest(channel=ch))["channel"], ch)
+                self.assertEqual(fr.manifest_url("https://fw.example.com", "example-psu", "esp32c3", ch),
+                                 "https://fw.example.com/example-psu/esp32c3/%s/manifest.json" % ch)
+        for ch in ("nightly", "Dev", "DEV", "devel", "", "dev "):
+            with self.subTest(channel=ch), self.assertRaises(fr.ReleaseError):
+                self.build_manifest(channel=ch)
+            with self.subTest(channel=ch), self.assertRaises(fr.ReleaseError):
+                fr.manifest_url("https://fw.example.com", "example-psu", "esp32c3", ch)
+
+    def test_cli_manifest_and_verify_dev_channel(self):
+        priv = self.path("test-only-key.pem")
+        with open(priv, "wb") as f:
+            f.write(priv_pem(self.key))
+        out = self.path("manifest.json")
+        code, stdout, err = self.run_cli("manifest", "--bin", self.bin, "--product", "example-psu", "--chip",
+                                         "esp32c3", "--version", "1.4.0-dev.3", "--channel", "dev", "--base-url",
+                                         "https://fw.example.com", "--released-at", "2026-11-22T10:00:00Z", "-o", out)
+        self.assertEqual(code, 0, err)
+        self.assertIn("https://fw.example.com/example-psu/esp32c3/dev/manifest.json", stdout)
+        code, _, err = self.run_cli("sign", "--manifest", out, "--local-key", priv)
+        self.assertEqual(code, 0, err)
+        code, stdout, err = self.run_cli("verify", "--manifest", out, "--public-key", self.pub, "--bin", self.bin)
+        self.assertEqual(code, 0, err)
+        self.assertIn("1.4.0-dev.3 dev", stdout)
+
     def test_cli_writes_file_without_newline(self):
         out = self.path("manifest.json")
         code, _, err = self.run_cli("manifest", "--bin", self.bin, "--product", "example-psu", "--chip", "esp32c3",

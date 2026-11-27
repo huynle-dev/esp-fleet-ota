@@ -38,7 +38,7 @@ struct Manifest {
     char product[33] = {0};
     char chip[17] = {0};
     char board[33] = {0};        // "" when absent
-    char channel[9] = {0};       // "stable" | "beta"
+    char channel[9] = {0};       // "stable" | "beta" | "dev"
     char version[33] = {0};      // semver
     char min_version[33] = {0};  // semver or "" when absent
     char url[257] = {0};

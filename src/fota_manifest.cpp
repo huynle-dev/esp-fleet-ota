@@ -124,6 +124,9 @@ bool validKeyId(const char* s) {
         if (!lowerAlnum(*p) && !(*p >= 'A' && *p <= 'Z') && *p != '-' && *p != '_' && *p != '.') return false;
     return true;
 }
+bool validChannel(const char* s) {        // a closed set: anything else is refused, as before
+    return !strcmp(s, "stable") || !strcmp(s, "beta") || !strcmp(s, "dev");
+}
 bool validUrlSyntax(const char* s) {      // host/allow-list checks are policy (fota_checks.h)
     if (strncmp(s, "https://", 8) != 0 || !s[8]) return false;
     for (const char* p = s; *p; p++) if ((unsigned char)*p <= 0x20 || (unsigned char)*p >= 0x7F) return false;
@@ -149,7 +152,7 @@ bool validTimestamp(const char* s) {      // YYYY-MM-DDTHH:MM:SSZ
 bool validString(const char* name, const char* v) {
     if (!strcmp(name, "product") || !strcmp(name, "board")) return validSlug(v);
     if (!strcmp(name, "chip")) return validChip(v);
-    if (!strcmp(name, "channel")) return !strcmp(v, "stable") || !strcmp(v, "beta");
+    if (!strcmp(name, "channel")) return validChannel(v);
     if (!strcmp(name, "version") || !strcmp(name, "min_version")) { SemVer sv; return parseSemVer(v, sv); }
     if (!strcmp(name, "url")) return validUrlSyntax(v);
     if (!strcmp(name, "sha256")) return validSha(v);

@@ -34,7 +34,7 @@ struct AutoCheck {
 struct OtaConfig {
     const char* manifest_url = nullptr;      // https://fw.example.com/<product>/<chip>/<channel>/manifest.json
     const char* signature_url = nullptr;     // null: manifest_url + ".sig"
-    const char* channel = "stable";
+    const char* channel = "stable";          // "stable" | "beta" | "dev"; must equal the manifest's channel
     const char* const* allowed_hosts = nullptr;
     size_t allowed_host_count = 0;
     const TrustedKey* keys = nullptr;

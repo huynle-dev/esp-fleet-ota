@@ -15,7 +15,7 @@ struct DeviceIdentity {
 };
 
 struct CheckConfig {
-    const char* channel;                  // "stable" | "beta"
+    const char* channel;                  // "stable" | "beta" | "dev"
     const char* const* allowed_hosts;     // exact host names (case-insensitive), no wildcards
     size_t allowed_host_count;
 };

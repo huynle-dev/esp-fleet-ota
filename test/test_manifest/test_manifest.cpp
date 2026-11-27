@@ -134,6 +134,19 @@ static void test_bad_values() {
     EXPECT_ERR(ManifestError::BadValue, with("released_at", "\"2026-11-22 10:00:00Z\""));
 }
 
+// Channel set: stable | beta | dev. Anything else stays refused (the parser is fail-closed).
+static void test_channel_set() {
+    const char* ok[] = {"stable", "beta", "dev"};
+    for (const char* c : ok) {
+        Manifest m;
+        std::string v = std::string("\"") + c + "\"";
+        TEST_ASSERT_EQUAL_STRING_MESSAGE("Ok", manifestErrorName(parse(with("channel", v.c_str()), m)), c);
+        TEST_ASSERT_EQUAL_STRING(c, m.channel);
+    }
+    const char* bad[] = {"\"nightly\"", "\"Dev\"", "\"DEV\"", "\"dev \"", "\"devel\"", "\"de\"", "\"\"", "\"stable2\""};
+    for (const char* c : bad) EXPECT_ERR(ManifestError::BadValue, with("channel", c));
+}
+
 static void test_field_too_long() {
     std::string longProduct = "\"" + std::string(33, 'a') + "\"";
     EXPECT_ERR(ManifestError::FieldTooLong, with("product", longProduct.c_str()));
@@ -214,6 +227,7 @@ int main(int, char**) {
     RUN_TEST(test_each_required_field_missing);
     RUN_TEST(test_bad_types);
     RUN_TEST(test_bad_values);
+    RUN_TEST(test_channel_set);
     RUN_TEST(test_field_too_long);
     RUN_TEST(test_oversize_document);
     RUN_TEST(test_duplicate_and_unknown_keys);

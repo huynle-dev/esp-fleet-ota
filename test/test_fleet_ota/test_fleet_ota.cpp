@@ -157,6 +157,21 @@ static void test_policy_refusals_after_signature() {
     }
 }
 
+// A dev manifest is only accepted by a device configured for the dev channel; stable and beta devices refuse it, and a
+// dev device refuses stable/beta manifests.
+static void test_dev_channel_only_for_dev_devices() {
+    Release r; r.channel = "dev"; R->publish(r); R->boot();
+    TEST_ASSERT_EQUAL_STRING("wrong_channel", REASON(R->ota->check()));
+    R->cfg.channel = "beta"; R->boot();
+    TEST_ASSERT_EQUAL_STRING("wrong_channel", REASON(R->ota->check()));
+    R->cfg.channel = "dev"; R->boot();
+    TEST_ASSERT_EQUAL_STRING("none", REASON(R->ota->check()));
+    setUp();
+    Release s; R->publish(s);
+    R->cfg.channel = "dev"; R->boot();
+    TEST_ASSERT_EQUAL_STRING("wrong_channel", REASON(R->ota->check()));
+}
+
 static void test_anti_downgrade_floor_from_store() {
     Release r; R->publish(r);
     R->store.kv["floor"] = "1.5.0";
@@ -484,6 +499,7 @@ int main(int, char**) {
     RUN_TEST(test_unknown_key_and_version);
     RUN_TEST(test_signed_by_other_key_refused);
     RUN_TEST(test_policy_refusals_after_signature);
+    RUN_TEST(test_dev_channel_only_for_dev_devices);
     RUN_TEST(test_anti_downgrade_floor_from_store);
     RUN_TEST(test_image_must_fit_spare_slot);
     RUN_TEST(test_manifest_url_must_be_https_and_allowed);

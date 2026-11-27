@@ -46,6 +46,9 @@ MAX_MANIFEST_BYTES = 2048
 DEFAULT_KEY_ID = "esp-fleet-ota"          # example default key_id; use the key ids your devices are configured with
 FIELDS = ["schema", "product", "chip", "board", "channel", "version", "min_version", "url", "size", "sha256",
           "key_id", "released_at"]
+# The device parser accepts exactly these channels. Devices built before `dev` existed refuse a dev manifest, so a dev
+# manifest is only ever published to the dev channel path (<base>/<product>/<chip>/dev/manifest.json).
+CHANNELS = ("stable", "beta", "dev")
 REQUIRED = {"schema", "product", "chip", "channel", "version", "url", "size", "sha256", "key_id", "released_at"}
 # Factory descriptor (browser flashing): this exact key order; board is the only optional key.
 FACTORY_FIELDS = ["schema", "product", "chip", "board", "version", "factory_url", "factory_sha256", "factory_size",
@@ -120,8 +123,8 @@ def validate_manifest(m):
     _check_str("chip", m["chip"], _CHIP, 16)
     if "board" in m:
         _check_str("board", m["board"], _SLUG)
-    if m["channel"] not in ("stable", "beta"):
-        raise ReleaseError("channel must be stable or beta")
+    if m["channel"] not in CHANNELS:
+        raise ReleaseError("channel must be one of %s" % ", ".join(CHANNELS))
     _check_str("version", m["version"], None)
     parse_semver(m["version"])
     if "min_version" in m:
@@ -285,8 +288,8 @@ def manifest_url(base, product, chip, channel):
     """<base>/<product>/<chip>/<channel>/manifest.json"""
     _check_str("product", product, _SLUG)
     _check_str("chip", chip, _CHIP, 16)
-    if channel not in ("stable", "beta"):
-        raise ReleaseError("channel must be stable or beta")
+    if channel not in CHANNELS:
+        raise ReleaseError("channel must be one of %s" % ", ".join(CHANNELS))
     return "%s/%s/%s/%s/manifest.json" % (_base(base), product, chip, channel)
 
 
@@ -425,7 +428,7 @@ def build_parser():
     m.add_argument("--product", required=True)
     m.add_argument("--chip", required=True)
     m.add_argument("--board")
-    m.add_argument("--channel", default="stable")
+    m.add_argument("--channel", default="stable", choices=CHANNELS)
     m.add_argument("--version", required=True)
     m.add_argument("--min-version")
     m.add_argument("--url", help="image URL; default <base-url>/<product>/<version>/<chip>/firmware.bin")
