@@ -6,6 +6,11 @@ page embed these at build time; nothing fetches them at runtime.
 | File | key_id | Signature format | Fingerprint (SHA-256 of the DER SubjectPublicKeyInfo) |
 |---|---|---|---|
 | `esp-fleet-ota-v1.pem` | `esp-fleet-ota`, version 1 | `vault:v1:<base64 DER>` (OpenBao transit) | `c47d4ef66aabd9cabc15d27b7d7437bb3c5eadb9ae1c17fe091c28125d1b661e` |
+| `esp-fleet-ota-dev-v1.pem` | `esp-fleet-ota-dev`, version 1 | `vault:v1:<base64 DER>` (OpenBao transit) | `d9601240ee1ad5c40bebc0a4487f803360aceb53c2547ba007785c5e94aa392b` |
+
+**`esp-fleet-ota-dev` is a development key.** It signs only `dev`-channel manifests (bench images) and must be
+trusted only by bench builds of a product, never by production firmware: a production build that embeds it would accept
+anything signed for the bench. ECDSA P-256, created 2026-11-27 in an OpenBao transit engine, non-exportable.
 
 A break-glass key (bare base64 DER signatures) will be added as its own file and key_id.
 
