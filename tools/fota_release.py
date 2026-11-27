@@ -10,7 +10,7 @@
     fota_release.py sign --manifest manifest.json --local-key test.pem    # TEST ONLY
     fota_release.py verify --manifest manifest.json [--sig manifest.json.sig] --public-key pub.pem
                            [--key-version N] [--bin firmware.bin]
-    fota_release.py merge --build-dir .pio/build/esp32c3 --chip esp32c3 [-o factory.bin]   # wraps esptool merge_bin
+    fota_release.py merge --build-dir .pio/build/esp32c3 --chip esp32c3 [-o factory.bin]   # wraps esptool merge-bin (esptool 4: merge_bin)
     fota_release.py factory --bin factory.bin --product P --chip esp32c3 --version 1.4.0 \
                             (--url https://... | --base-url https://fw.example.com) [-o factory.json]
     fota_release.py c-key --public-key pub.pem --key-id esp-fleet-ota --key-version N --name kEspFleetOtaV1
@@ -451,7 +451,7 @@ def build_parser():
     f.add_argument("-o", "--output", default="factory.json")
     p._fota_sub["factory"] = f
 
-    g = sub.add_parser("merge", help="merge a PlatformIO build into one factory.bin (esptool merge_bin)")
+    g = sub.add_parser("merge", help="merge a PlatformIO build into one factory.bin (esptool merge-bin)")
     g.add_argument("--build-dir", required=True, help="e.g. .pio/build/esp32c3 (bootloader/partitions/firmware.bin)")
     g.add_argument("--chip", required=True)
     g.add_argument("--esptool", help="esptool executable; default esptool.py or esptool on PATH")
@@ -532,14 +532,18 @@ _BOOTLOADER_AT = {
 }
 
 
-def merge_command(esptool, chip, build_dir, output, flash_size="4MB"):
+def merge_command(esptool, chip, build_dir, output, flash_size="4MB", legacy=False):
+    """esptool 5 spelling (`merge-bin --flash-mode --flash-size`), or the esptool 4 one when legacy is true."""
     _check_str("chip", chip, _CHIP, 16)
     if chip not in _BOOTLOADER_AT:
         raise ReleaseError("no known bootloader offset for chip %s (known: %s); add it to _BOOTLOADER_AT after "
                            "checking the chip's bootloader offset" % (chip, ", ".join(sorted(_BOOTLOADER_AT))))
     parts = [(_BOOTLOADER_AT[chip], "bootloader.bin"), ("0x8000", "partitions.bin"),
              ("0x10000", "firmware.bin")]
-    cmd = [esptool, "--chip", chip, "merge_bin", "-o", output, "--flash_mode", "dio", "--flash_size", flash_size]
+    if legacy:
+        cmd = [esptool, "--chip", chip, "merge_bin", "-o", output, "--flash_mode", "dio", "--flash_size", flash_size]
+    else:
+        cmd = [esptool, "--chip", chip, "merge-bin", "-o", output, "--flash-mode", "dio", "--flash-size", flash_size]
     for off, name in parts:
         path = os.path.join(build_dir, name)
         if not os.path.isfile(path):
@@ -548,18 +552,32 @@ def merge_command(esptool, chip, build_dir, output, flash_size="4MB"):
     return cmd
 
 
+def _run_esptool(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ReleaseError("esptool failed: %s" % e)
+
+
+# How esptool reports a command or option it does not know: argparse (esptool 4) or click (esptool 5).
+_UNKNOWN_COMMAND = re.compile(r"invalid choice|no such command|no such option|unrecognized arguments", re.I)
+
+
+def _unknown_command(r):
+    return bool(_UNKNOWN_COMMAND.search((r.stderr or "") + (r.stdout or "")))
+
+
 def cmd_merge(a):
     _check_str("chip", a.chip, _CHIP, 16)
     esptool = a.esptool or shutil.which("esptool.py") or shutil.which("esptool")
     if not esptool:
         raise ReleaseError("esptool not found: install it (pip install esptool) or pass --esptool <path>")
-    cmd = merge_command(esptool, a.chip, a.build_dir, a.output, a.flash_size)
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=300)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        raise ReleaseError("esptool failed: %s" % e)
+    r = _run_esptool(merge_command(esptool, a.chip, a.build_dir, a.output, a.flash_size))
+    if r.returncode != 0 and _unknown_command(r):
+        # esptool 4 does not know `merge-bin` / `--flash-mode`: retry with its spelling
+        r = _run_esptool(merge_command(esptool, a.chip, a.build_dir, a.output, a.flash_size, legacy=True))
     if r.returncode != 0:
-        raise ReleaseError("esptool merge_bin failed: %s" % (r.stderr or r.stdout).strip())
+        raise ReleaseError("esptool merge failed: %s" % (r.stderr or r.stdout).strip())
     print("wrote %s (first install / recovery only: it overwrites NVS at 0x9000 and otadata)" % a.output)
 
 

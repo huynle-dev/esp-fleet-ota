@@ -121,7 +121,9 @@ which reject unknown keys, so the two evolve independently.
 tools/fota_release.py merge --build-dir .pio/build/esp32c3 --chip esp32c3 -o /tmp/rel/factory.bin
 ```
 
-This runs `esptool.py --chip <chip> merge_bin -o factory.bin --flash_mode dio --flash_size 4MB` with
+This runs `esptool --chip <chip> merge-bin -o factory.bin --flash-mode dio --flash-size 4MB` (esptool 5 spelling);
+if esptool refuses it as an unknown command/option, it retries with `merge_bin --flash_mode --flash_size` (esptool 4).
+Other errors are reported without retry. The parts and offsets are
 
 | Offset | File | Contents |
 |---|---|---|
@@ -132,7 +134,7 @@ This runs `esptool.py --chip <chip> merge_bin -o factory.bin --flash_mode dio --
 `--esptool <path>` picks a specific esptool (`pip install esptool`); `--flash-size` changes the size. The offsets
 match the partition table in `examples/minimal/partitions.csv`; check yours.
 
-**A merged image is for first install and recovery only.** `merge_bin` fills the gaps between the parts with `0xFF`,
+**A merged image is for first install and recovery only.** `merge-bin` fills the gaps between the parts with `0xFF`,
 so flashing it erases NVS (`0x9000`: Wi-Fi credentials, the OTA `last_result` and anti-downgrade floor, device
 settings) and `otadata` (`0xe000`), and the device boots `app0`. Routine updates go through OTA.
 

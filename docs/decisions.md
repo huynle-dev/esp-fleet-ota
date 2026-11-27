@@ -160,3 +160,13 @@ for `esp-fleet-ota` and `esp-fleet-ota-dev`): each key_id verifies with its own 
 is `key_version_mismatch`. A mutant that drops the key_id comparison in `findTrustedKey` is in the mutation check.
 Consequences: trusting a dev key is a build-time choice per firmware; docs/integration.md states that bench builds
 can trust an extra dev key and production builds must not.
+
+## D25 esptool 5 spelling, with a fallback for esptool 4
+Context: esptool 5 spells the merge command and options `merge-bin --flash-mode --flash-size`; the underscored
+spelling belongs to esptool 4.
+Decision: `merge` uses the esptool 5 spelling first, retries with `merge_bin --flash_mode --flash_size` only when
+esptool reports an unknown command or option (`invalid choice`, `No such command`, `No such option`, `unrecognized
+arguments`). Other errors (e.g. unable to read a part) are reported without retry; a failure of the legacy retry is
+reported too. `merge_command(..., legacy=True)` is available to callers that need to build the old argument list.
+Consequences: one tool works with either esptool version while keeping the explicit per-chip bootloader offsets and
+unknown-chip refusal. Tested with fake esptool 5 and 4 executables, including a fatal error and a failing fallback.

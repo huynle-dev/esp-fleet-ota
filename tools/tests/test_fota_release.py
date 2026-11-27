@@ -625,10 +625,97 @@ class TestMerge(Base):
             code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32c3", "-o", out)
         self.assertEqual(code, 0, err)
         b = lambda n: os.path.join(self.build_dir, n)
-        self.assertEqual(calls, [["/fake/esptool.py", "--chip", "esp32c3", "merge_bin", "-o", out,
-                                  "--flash_mode", "dio", "--flash_size", "4MB",
+        self.assertEqual(calls, [["/fake/esptool.py", "--chip", "esp32c3", "merge-bin", "-o", out,
+                                  "--flash-mode", "dio", "--flash-size", "4MB",
                                   "0x0", b("bootloader.bin"), "0x8000", b("partitions.bin"),
                                   "0x10000", b("firmware.bin")]])
+
+    def test_merge_command_legacy_spelling(self):
+        b = lambda n: os.path.join(self.build_dir, n)
+        out = self.path("f.bin")
+        self.assertEqual(fr.merge_command("/fake/esptool", "esp32s3", self.build_dir, out, legacy=True),
+                         ["/fake/esptool", "--chip", "esp32s3", "merge_bin", "-o", out, "--flash_mode", "dio",
+                          "--flash_size", "4MB", "0x0", b("bootloader.bin"), "0x8000", b("partitions.bin"),
+                          "0x10000", b("firmware.bin")])
+
+    # Fake esptool executables: v5 knows only `merge-bin --flash-mode --flash-size`; v4 knows only
+    # `merge_bin --flash_mode --flash_size` and rejects the v5 spelling like argparse does. Both log their argv.
+    _FAKE = """#!%(python)s
+import json, sys
+args = sys.argv[1:]
+with open(%(log)r, "a") as f:
+    f.write(json.dumps(args) + "\\n")
+cmd = args[2]
+want = %(want)r
+if %(fatal)r and cmd == want[0]:
+    sys.stderr.write("A fatal error occurred: %(fatal)s\\n"); sys.exit(2)
+if cmd != want[0]:
+    if want[0] == "merge_bin":
+        sys.stderr.write("usage: esptool [-h]\\nesptool: error: argument operation: invalid choice: '%%s' "
+                         "(choose from 'write_flash', 'merge_bin')\\n" %% cmd)
+    else:
+        sys.stderr.write("Usage: esptool [OPTIONS] COMMAND [ARGS]...\\nError: No such command '%%s'.\\n" %% cmd)
+    sys.exit(2)
+if want[1] not in args or want[2] not in args:
+    sys.stderr.write("error: unrecognized arguments\\n"); sys.exit(2)
+open(args[args.index("-o") + 1], "wb").write(b"merged")
+"""
+
+    def fake_esptool(self, version, fatal=""):
+        log = self.path("esptool-%s.log" % version)
+        want = ["merge-bin", "--flash-mode", "--flash-size"] if version == 5 else \
+            ["merge_bin", "--flash_mode", "--flash_size"]
+        exe = self.path("esptool-v%s" % version)
+        with open(exe, "w") as f:
+            f.write(self._FAKE % dict(python=sys.executable, log=log, want=want, fatal=fatal))
+        os.chmod(exe, 0o755)
+        return exe, log
+
+    def calls(self, log):
+        with open(log) as f:
+            return [json.loads(l) for l in f]
+
+    def test_merge_with_esptool5(self):
+        exe, log = self.fake_esptool(5)
+        out = self.path("factory.bin")
+        code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32c3", "--esptool", exe,
+                                    "-o", out)
+        self.assertEqual(code, 0, err)
+        calls = self.calls(log)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:5], ["--chip", "esp32c3", "merge-bin", "-o", out])
+        self.assertEqual(calls[0][5:9], ["--flash-mode", "dio", "--flash-size", "4MB"])
+        with open(out, "rb") as f:
+            self.assertEqual(f.read(), b"merged")
+
+    def test_merge_falls_back_to_esptool4_spelling(self):
+        exe, log = self.fake_esptool(4)
+        out = self.path("factory.bin")
+        code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32s3", "--esptool", exe,
+                                    "-o", out, "--flash-size", "8MB")
+        self.assertEqual(code, 0, err)
+        calls = self.calls(log)
+        self.assertEqual([c[2] for c in calls], ["merge-bin", "merge_bin"])
+        self.assertEqual(calls[1][3:9], ["-o", out, "--flash_mode", "dio", "--flash_size", "8MB"])
+        self.assertEqual(calls[1][9:11], ["0x0", os.path.join(self.build_dir, "bootloader.bin")])
+        with open(out, "rb") as f:
+            self.assertEqual(f.read(), b"merged")
+
+    def test_merge_does_not_fall_back_on_other_errors(self):
+        exe, log = self.fake_esptool(5, fatal="Unable to open bootloader.bin")
+        code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32c3", "--esptool", exe,
+                                    "-o", self.path("f.bin"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("Unable to open bootloader.bin", err)
+        self.assertEqual(len(self.calls(log)), 1)
+
+    def test_merge_fallback_failure_reported(self):
+        exe, log = self.fake_esptool(4, fatal="Unable to open firmware.bin")
+        code, _, err = self.run_cli("merge", "--build-dir", self.build_dir, "--chip", "esp32c3", "--esptool", exe,
+                                    "-o", self.path("f.bin"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("Unable to open firmware.bin", err)
+        self.assertEqual([c[2] for c in self.calls(log)], ["merge-bin", "merge_bin"])
 
     def test_merge_explicit_esptool_and_s3(self):
         calls = []
