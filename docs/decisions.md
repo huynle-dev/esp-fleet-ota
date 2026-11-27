@@ -149,3 +149,14 @@ refuse forever with no override (rejected: a self-test that failed for an extern
 Tests: `test/test_rejected`, `test_failed_install_remembers_version`, `test_rejected_version_refused_unless_forced`,
 `test_resigned_same_version_still_refused`, `test_force_does_not_bypass_other_checks`,
 `test_confirmed_newer_install_clears_older_entries`, `test_reason_codes_append_only`.
+
+## D24 Several trusted keys, selected by key_id
+Context: bench builds want to install dev-channel images signed by a separate dev key without giving that key any
+power over production devices.
+Decision: no code change; the existing table (D4) already holds entries for several key_ids. Tests now prove it end
+to end through FleetOta with two keys (`test-only-esp-fleet-ota` v1 and `test-only-esp-fleet-ota-dev` v1, standing in
+for `esp-fleet-ota` and `esp-fleet-ota-dev`): each key_id verifies with its own key, a signature by the other key is
+`signature_invalid`, exactly one trusted key is tried per check, an unknown key_id is `unknown_key_id` and a missing N
+is `key_version_mismatch`. A mutant that drops the key_id comparison in `findTrustedKey` is in the mutation check.
+Consequences: trusting a dev key is a build-time choice per firmware; docs/integration.md states that bench builds
+can trust an extra dev key and production builds must not.

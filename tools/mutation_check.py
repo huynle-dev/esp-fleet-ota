@@ -67,6 +67,18 @@ MUTATIONS = [
     ("device canUpdateNow ignored", "src/fleet_ota.cpp",
      "    if (!d_.hooks.canUpdateNow(why, sizeof(why))) {\n        finishFailure",
      "    if (false) {\n        finishFailure"),
+    ("channel set widened to any value", "src/fota_manifest.cpp",
+     "    return !strcmp(s, \"stable\") || !strcmp(s, \"beta\") || !strcmp(s, \"dev\");",
+     "    return s != nullptr;"),
+    ("rejected-version check skipped", "src/fleet_ota.cpp",
+     "    if (r == Reason::none && !force && rejected_.contains(m.version)) r = Reason::rejected;\n", ""),
+    ("rejected check always forced", "src/fleet_ota.cpp",
+     "    Reason r = checkWith(force);", "    Reason r = checkWith(true);"),
+    ("rejected version not remembered", "src/fleet_ota.cpp",
+     "    if (rejected_.add(version)) saveRejected(d_.store, rejected_);", "    (void)version;"),
+    ("signature: key_id matching dropped", "src/fota_signature.cpp",
+     "        if (keys[i].key_id && !strcmp(keys[i].key_id, keyId) && keys[i].key_version == keyVersion) return &keys[i];",
+     "        if (keys[i].key_id && keys[i].key_version == keyVersion) return &keys[i];"),
 ]
 
 

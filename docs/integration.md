@@ -93,6 +93,14 @@ cfg.keys = kKeys; cfg.key_count = 2;
 - Key table rules: an entry is (key_id, N). `vault:vN:` signatures need an entry with that N; bare base64
   signatures need an entry with N = 0. Unknown key_id: `unknown_key_id`; known key_id without that N:
   `key_version_mismatch`. Keep one entry per trusted OpenBao key version (docs/release.md, rotation).
+- Several trusted keys: the table may hold entries for more than one key_id, e.g. the release key `esp-fleet-ota`
+  (N = 1) and a separate dev key `esp-fleet-ota-dev` that signs the dev channel. A signature is checked only against
+  the entry whose key_id equals the manifest's `key_id` and whose N equals the `.sig`'s `vault:vN:` (0 for bare):
+  a manifest claiming the dev key but signed by the release key (or the other way round) is `signature_invalid`, and
+  a key_id that is not in the table is `unknown_key_id`. **Bench builds can trust an extra dev key; production builds
+  must not**: every key in the table can sign firmware that the device installs, so a production table lists only
+  the release key versions and the break-glass key (tests: `test_two_trusted_keys_each_verifies_its_own_key_id`,
+  `test_signature_checked_only_against_matching_key_id`, `test_unknown_key_id_and_version_with_two_keys`).
 - Channel: `cfg.channel` (`stable`, `beta` or `dev`) must equal the manifest's channel; switching a device to beta or
   dev means changing both the channel and the manifest URL. A manifest naming `dev` is only ever accepted by a device
   configured for the dev channel (`wrong_channel` otherwise). Devices running a release of this library from before

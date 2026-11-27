@@ -4,6 +4,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <vector>
 #include "fleet_ota.h"
 #include "fota_fakes.h"
 #include "fota_test_signer.h"
@@ -626,6 +627,79 @@ static void test_status_json_lists_rejected_versions() {
     TEST_ASSERT_EQUAL_STRING(tail, buf + strlen(buf) - strlen(tail));
 }
 
+// ------------------------------------------------------------------ several trusted keys
+// A bench build may trust an extra dev key next to the release key. Each signature is checked only against the
+// entry matching the manifest's key_id (and the vault key version N); an unknown key_id is refused.
+struct VerifyLog : IEcdsaP256Verifier {
+    IEcdsaP256Verifier& real;
+    std::vector<const uint8_t*> keysTried;
+    explicit VerifyLog(IEcdsaP256Verifier& r) : real(r) {}
+    bool verify(const uint8_t* k, size_t kl, const uint8_t* h, const uint8_t* sig, size_t sl) override {
+        keysTried.push_back(k);
+        return real.verify(k, kl, h, sig, sl);
+    }
+};
+
+static const char* PROD_ID = "test-only-esp-fleet-ota";
+static const char* DEV_ID = "test-only-esp-fleet-ota-dev";
+
+// Publishes `r` signed by `by` with vault version n, on a device that trusts {PROD_ID v1: R->signer, DEV_ID v1: dev}.
+static Reason checkTwoKeys(Release& r, const TestSigner& dev, const TestSigner& by, unsigned n, VerifyLog* log = nullptr) {
+    static TrustedKey keys[2];
+    keys[0] = TrustedKey{PROD_ID, 1, R->signer.spki.data(), R->signer.spki.size()};
+    keys[1] = TrustedKey{DEV_ID, 1, dev.spki.data(), dev.spki.size()};
+    R->cfg.keys = keys;
+    R->cfg.key_count = 2;
+    R->publish(r);
+    R->http.routes[SURL].body = by.signVault(r.json(), n);
+    IEcdsaP256Verifier& v = log ? (IEcdsaP256Verifier&)*log : (IEcdsaP256Verifier&)R->ecdsa;
+    R->ota.reset(new FleetOta(R->cfg, R->dev, OtaDeps{R->http, R->writer, R->platform, R->store, R->hooks, R->clock,
+                                                       R->sha, v}));
+    R->ota->begin();
+    return R->ota->check();
+}
+
+static void test_two_trusted_keys_each_verifies_its_own_key_id() {
+    TestSigner dev;
+    Release p; p.keyId = PROD_ID;
+    TEST_ASSERT_EQUAL_STRING("none", REASON(checkTwoKeys(p, dev, R->signer, 1)));
+    setUp();
+    TestSigner dev2;
+    Release d; d.keyId = DEV_ID;
+    TEST_ASSERT_EQUAL_STRING("none", REASON(checkTwoKeys(d, dev2, dev2, 1)));
+}
+
+static void test_signature_checked_only_against_matching_key_id() {
+    TestSigner dev;
+    Release d; d.keyId = DEV_ID;                                   // claims the dev key, signed by the release key
+    TEST_ASSERT_EQUAL_STRING("signature_invalid", REASON(checkTwoKeys(d, dev, R->signer, 1)));
+    setUp();
+    TestSigner dev2;
+    Release p; p.keyId = PROD_ID;                                  // claims the release key, signed by the dev key
+    TEST_ASSERT_EQUAL_STRING("signature_invalid", REASON(checkTwoKeys(p, dev2, dev2, 1)));
+    setUp();
+    TestSigner dev3;
+    Release q; q.keyId = DEV_ID;
+    VerifyLog log(R->ecdsa);
+    TEST_ASSERT_EQUAL_STRING("none", REASON(checkTwoKeys(q, dev3, dev3, 1, &log)));
+    // the known-answer self-test uses its own key; after it, exactly one verify, with the dev key
+    TEST_ASSERT_TRUE(!log.keysTried.empty());
+    TEST_ASSERT_TRUE(log.keysTried.back() == dev3.spki.data());
+    size_t withTrusted = 0;
+    for (const uint8_t* k : log.keysTried) if (k == dev3.spki.data() || k == R->signer.spki.data()) withTrusted++;
+    TEST_ASSERT_EQUAL_size_t(1, withTrusted);
+}
+
+static void test_unknown_key_id_and_version_with_two_keys() {
+    TestSigner dev;
+    Release u; u.keyId = "test-only-esp-fleet-ota-other";
+    TEST_ASSERT_EQUAL_STRING("unknown_key_id", REASON(checkTwoKeys(u, dev, dev, 1)));
+    setUp();
+    TestSigner dev2;
+    Release v; v.keyId = DEV_ID;
+    TEST_ASSERT_EQUAL_STRING("key_version_mismatch", REASON(checkTwoKeys(v, dev2, dev2, 2)));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_check_finds_update_without_installing);
@@ -673,5 +747,8 @@ int main(int, char**) {
     RUN_TEST(test_confirmed_newer_install_clears_older_entries);
     RUN_TEST(test_rejected_list_is_bounded);
     RUN_TEST(test_status_json_lists_rejected_versions);
+    RUN_TEST(test_two_trusted_keys_each_verifies_its_own_key_id);
+    RUN_TEST(test_signature_checked_only_against_matching_key_id);
+    RUN_TEST(test_unknown_key_id_and_version_with_two_keys);
     return UNITY_END();
 }
