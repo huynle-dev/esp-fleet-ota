@@ -11,6 +11,20 @@ memory, the device reboots, and the new image is kept only after a device-define
 bootloader rolls back. Updates are triggered through an API meant to be exposed as device tools (`ota_status`,
 `ota_check`, `ota_update <version>`) or MQTT, with an optional automatic check (off by default).
 
+## Features
+
+| Feature | Notes |
+|---|---|
+| Signed manifests | ECDSA P-256 over the exact bytes; OpenBao/Vault transit `vault:vN:` or bare break-glass signatures |
+| Several trusted keys | (key_id, N) table; a signature is checked only against the key matching the manifest's key_id; bench builds may trust an extra dev key, production builds must not |
+| Strict, allocation-free parser | flat JSON, 2 KB limit, unknown keys and anything outside the schema refused |
+| Channels | `stable`, `beta`, `dev`; a device installs only manifests for its configured channel |
+| Policy checks | product, chip, board, newer than running, anti-downgrade floor, image size, https + host allow-list |
+| Safe install | streamed into the spare slot with SHA-256, bounded memory, self-test after reboot, bootloader rollback |
+| Rejected-version memory | a version that failed its self-test or rolled back is refused (`rejected`) unless `update(v, force)`; last 8 kept, cleared by a newer confirmed install |
+| Device API | `ota_status`, `ota_check`, `ota_update <version> [force]`, optional auto-check (off by default) |
+| Release tool | `tools/fota_release.py`: manifest, sign (OpenBao transit), verify, factory descriptor, merge (esptool 5 `merge-bin`, falls back to esptool 4 `merge_bin`) |
+
 **Status: library verified on the host; hardware validation pending** (see [docs/verification.md](docs/verification.md)).
 
 | | |
